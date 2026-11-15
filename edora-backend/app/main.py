@@ -1,0 +1,14 @@
+from fastapi import FastAPI
+from app.routes import router
+from app.template_routes import router as template_router
+
+from app.page_routes import router as page_router
+
+app = FastAPI(title="Edora API", version="1.0.0")
+app.include_router(router)
+app.include_router(template_router)
+app.include_router(page_router)
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
