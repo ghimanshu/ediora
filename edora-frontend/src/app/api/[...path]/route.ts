@@ -20,7 +20,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       : /^public\/journals\/[a-z0-9]{8}\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(path) ? ["GET"]
       : path === "editor/profile" ? ["PATCH"]
       : /^editor\/pages(?:\/[1-9]\d*)?$/.test(path) ? ["GET"]
+      : path === "editor/journals" ? ["GET"]
       : path === "editor/journal" ? ["GET", "POST"]
+      : path === "editor/journal/status" ? ["PATCH"]
       : path === "editor/journal/pages" ? ["POST"]
       : path === "editor/journal/pages/order" ? ["PATCH"]
       : path === "editor/journal/template" || /^editor\/journal\/pages\/[1-9]\d*$/.test(path) ? ["PATCH"]
@@ -37,7 +39,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     const body = request.method === "GET" ? undefined : await request.text();
     const maxBodyBytes = path === "editor/journal" && request.method === "POST" ? 6500000 : /^(?:admin\/pages(?:\/[1-9]\d*)?|editor\/journal\/pages(?:\/[1-9]\d*)?)$/.test(path) ? 650000 : 20000;
     if (body && Buffer.byteLength(body, "utf8") > maxBodyBytes) return NextResponse.json({ detail: "Request too large" }, { status: 413 });
-    const upstream = await fetch(`${backend}/api/v1/${path}`, {
+    const upstream = await fetch(`${backend}/api/v1/${path}${request.nextUrl.search}`, {
       method: request.method, headers, body, cache: "no-store", signal: AbortSignal.timeout(20000),
     });
     const data = upstream.status === 204 ? null : await upstream.json();

@@ -109,3 +109,29 @@ test("private journal page creation and reordering forward through internal rout
     assert.deepEqual(forwarded, { method, body: payload });
   }
 });
+
+
+test("journal list and selected journal IDs are forwarded through the internal API", async () => {
+  let upstream;
+  const handlers = loadModule("src/app/api/[...path]/route.ts", async (url) => { upstream = url; return Response.json([]); });
+  let response = await handlers.GET(new NextRequest("http://localhost:3000/api/editor/journals"), context("editor/journals"));
+  assert.equal(response.status, 200);
+  assert.ok(upstream.endsWith("/api/v1/editor/journals"));
+  response = await handlers.GET(new NextRequest("http://localhost:3000/api/editor/journal?journal_id=7"), context("editor/journal"));
+  assert.equal(response.status, 200);
+  assert.ok(upstream.endsWith("/api/v1/editor/journal?journal_id=7"));
+});
+
+
+test("journal status updates preserve the selected journal ID", async () => {
+  const origin = process.env.APP_ORIGIN ?? "http://localhost:3000";
+  let forwarded;
+  const { PATCH } = loadModule("src/app/api/[...path]/route.ts", async (url, options) => {
+    forwarded = { url, body: JSON.parse(options.body) };
+    return Response.json({ id: 7, status: "Published" });
+  });
+  const response = await PATCH(new NextRequest(`${origin}/api/editor/journal/status?journal_id=7`, { method: "PATCH", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ status: "Published" }) }), context("editor/journal/status"));
+  assert.equal(response.status, 200);
+  assert.ok(forwarded.url.endsWith("/api/v1/editor/journal/status?journal_id=7"));
+  assert.deepEqual(forwarded.body, { status: "Published" });
+});

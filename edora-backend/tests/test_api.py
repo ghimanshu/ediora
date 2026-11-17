@@ -488,3 +488,65 @@ def test_journal_page_total_and_size_limits():
     large_pages = [{**page, "slug": f"page-{index}", "content_html": "<p>" + "a" * 99980 + "</p>"} for index in range(11)]
     with pytest.raises(ValidationError):
         JournalCreate(name="Journal", template_id=1, new_pages=large_pages)
+
+
+def test_multiple_journal_tiles_and_scoped_management(client, setup):
+    first = {"Authorization": f"Bearer {authenticate(client, setup)}"}
+    template_id = client.get("/api/v1/templates", headers=first).json()[0]["id"]
+    body = {"name": "First Journal", "template_id": template_id, "new_pages": [{"title": "Home", "slug": "home", "content_html": "<p>Original content</p>"}]}
+    assert client.get("/api/v1/editor/journals").status_code == 401
+    assert client.get("/api/v1/editor/journals", headers=first).json() == []
+    assert client.post("/api/v1/editor/journal", headers=first, json={**body, "status": "Published"}).status_code == 422
+    one = client.post("/api/v1/editor/journal", headers=first, json=body).json()
+    assert one["status"] == "Draft"
+    two_response = client.post("/api/v1/editor/journal", headers=first, json={**body, "name": "Second Journal"})
+    assert two_response.status_code == 201
+    two = two_response.json()
+    assert one["editor_code"] == two["editor_code"]
+    assert one["preview_path"] != two["preview_path"]
+    assert client.post("/api/v1/editor/journal", headers=first, json=body).status_code == 409
+    tiles = client.get("/api/v1/editor/journals", headers=first).json()
+    assert {tile["id"] for tile in tiles} == {one["id"], two["id"]}
+    assert all(tile["page_count"] == 1 for tile in tiles)
+    assert all("pages" not in tile and "template_layout" not in tile for tile in tiles)
+    assert client.get("/api/v1/editor/journal", headers=first).status_code == 409
+    one_path = f'/api/v1/editor/journal?journal_id={one["id"]}'
+    two_path = f'/api/v1/editor/journal?journal_id={two["id"]}'
+    assert client.get(one_path, headers=first).json()["name"] == "First Journal"
+    assert client.get(two_path, headers=first).json()["name"] == "Second Journal"
+    new_page = {"title": "Only first", "slug": "only-first", "content_html": "<p>Private content</p>"}
+    assert client.post("/api/v1/editor/journal/pages", headers=first, json=new_page).status_code == 409
+    assert client.post(f'/api/v1/editor/journal/pages?journal_id={one["id"]}', headers=first, json=new_page).status_code == 201
+    assert len(client.get(one_path, headers=first).json()["pages"]) == 2
+    assert len(client.get(two_path, headers=first).json()["pages"]) == 1
+    cross_page = f'/api/v1/editor/journal/pages/{two["pages"][0]["id"]}?journal_id={one["id"]}'
+    assert client.patch(cross_page, headers=first, json=new_page).status_code == 404
+    assert client.patch(f'/api/v1/editor/journal/pages/order?journal_id={one["id"]}', headers=first, json={"page_ids": [two["pages"][0]["id"]]}).status_code == 409
+    second_data = {**payload, "email": "another-owner@example.com"}
+    client.post("/api/v1/auth/register", json=second_data)
+    token = re.search(r'token=([^\s]+)', setup[-1][2]).group(1)
+    client.post("/api/v1/auth/verify-email", json={"token": token})
+    other_token = client.post("/api/v1/auth/login", json={"email": second_data["email"], "password": payload["password"]}).json()["access_token"]
+    other = {"Authorization": f"Bearer {other_token}"}
+    assert client.get("/api/v1/editor/journals", headers=other).json() == []
+    assert client.get(one_path, headers=other).status_code == 404
+    assert client.post(f'/api/v1/editor/journal/pages?journal_id={one["id"]}', headers=other, json=new_page).status_code == 404
+    other_journal = client.post("/api/v1/editor/journal", headers=other, json=body)
+    assert other_journal.status_code == 201
+    assert other_journal.json()["slug"] == one["slug"]
+    assert other_journal.json()["editor_code"] != one["editor_code"]
+    status_url = f'/api/v1/editor/journal/status?journal_id={one["id"]}'
+    assert client.patch(status_url, json={"status": "Published"}).status_code == 401
+    assert client.patch(status_url, headers=other, json={"status": "Published"}).status_code == 404
+    assert client.patch(status_url, headers=first, json={"status": "Invalid"}).status_code == 422
+    assert client.patch(status_url, headers=first, json={"status": "Published", "editor_id": 99}).status_code == 422
+    assert client.patch("/api/v1/editor/journal/status", headers=first, json={"status": "Published"}).status_code == 409
+    for status in ("Published", "NotPublished", "Draft"):
+        updated = client.patch(status_url, headers=first, json={"status": status})
+        assert updated.status_code == 200 and updated.json()["status"] == status
+        assert client.get(one_path, headers=first).json()["status"] == status
+        listed = client.get("/api/v1/editor/journals", headers=first).json()
+        assert next(item for item in listed if item["id"] == one["id"])["status"] == status
+        assert client.get(two_path, headers=first).json()["status"] == "Draft"
+    with SessionLocal() as db:
+        assert db.get(EditorJournal, one["id"]).status == "Draft"

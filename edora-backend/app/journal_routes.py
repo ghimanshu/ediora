@@ -1,8 +1,8 @@
 from copy import deepcopy
 import re
 import unicodedata
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, delete
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
@@ -11,7 +11,7 @@ from app.routes import current_editor, verification_email
 from app.schemas import EditorProfileInput, EditorOutput
 from app.page_schemas import PageInput, PageOutput, PageSummary
 from app.template_schemas import TemplateInput, TemplateLayout
-from app.journal_schemas import JournalCreate, JournalOutput, JournalPageOrder
+from app.journal_schemas import JournalCreate, JournalOutput, JournalPageOrder, JournalSummary, JournalStatusUpdate
 
 router = APIRouter(prefix="/api/v1/editor")
 
@@ -51,32 +51,46 @@ def library_page(page_id: int, editor: Editor = Depends(editor_account), db: DBS
         raise HTTPException(404, "Page not found")
     return page
 
-def own_journal(db, editor_id):
-    journal = db.scalar(select(EditorJournal).where(EditorJournal.editor_id == editor_id).with_for_update())
-    if not journal:
-        raise HTTPException(404, "Create your journal first")
-    return journal
+def own_journal(db, editor_id, journal_id=None):
+    statement = select(EditorJournal).where(EditorJournal.editor_id == editor_id)
+    if journal_id is not None:
+        statement = statement.where(EditorJournal.id == journal_id)
+    journals = db.scalars(statement.order_by(EditorJournal.id).limit(2).with_for_update()).all()
+    if not journals:
+        raise HTTPException(404, "Journal not found")
+    if len(journals) > 1:
+        raise HTTPException(409, "Select a journal before managing its content")
+    return journals[0]
+
+@router.get("/journals", response_model=list[JournalSummary])
+def list_journals(editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
+    count = select(func.count(EditorJournalPage.id)).where(EditorJournalPage.journal_id == EditorJournal.id).correlate(EditorJournal).scalar_subquery()
+    rows = db.execute(select(EditorJournal, count.label("page_count")).where(EditorJournal.editor_id == editor.id).order_by(EditorJournal.created_at.desc(), EditorJournal.id.desc())).all()
+    return [{"id": journal.id, "name": journal.name, "slug": journal.slug, "status": journal.status, "template_name": journal.template_name,
+             "page_count": page_count, "created_at": journal.created_at, "updated_at": journal.updated_at} for journal, page_count in rows]
 
 def journal_output(db, journal):
     owner = db.get(Editor, journal.editor_id)
     pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id).order_by(EditorJournalPage.position)).all()
     first_page = next((page.slug for page in pages if page.slug == "home"), pages[0].slug if pages else "current")
-    return {"id": journal.id, "name": journal.name, "editor_code": owner.public_code,
+    return {"id": journal.id, "name": journal.name, "status": journal.status, "editor_code": owner.public_code,
             "slug": journal.slug, "preview_path": f"/{owner.public_code}/{journal.slug}/{first_page}",
             "template_name": journal.template_name,
             "template_description": journal.template_description, "template_layout": journal.template_layout,
             "pages": pages, "created_at": journal.created_at, "updated_at": journal.updated_at}
 
 @router.get("/journal", response_model=JournalOutput | None)
-def get_journal(editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
-    journal = db.scalar(select(EditorJournal).where(EditorJournal.editor_id == editor.id))
-    return journal_output(db, journal) if journal else None
+def get_journal(editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db), journal_id: int | None = Query(None, gt=0)):
+    if journal_id is not None:
+        return journal_output(db, own_journal(db, editor.id, journal_id))
+    journals = db.scalars(select(EditorJournal).where(EditorJournal.editor_id == editor.id).order_by(EditorJournal.id).limit(2)).all()
+    if len(journals) > 1:
+        raise HTTPException(409, "Select a journal before managing its content")
+    return journal_output(db, journals[0]) if journals else None
 
 @router.post("/journal", response_model=JournalOutput, status_code=201)
 def create_journal(data: JournalCreate, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
     db.scalar(select(Editor).where(Editor.id == editor.id).with_for_update())
-    if db.scalar(select(EditorJournal.id).where(EditorJournal.editor_id == editor.id)):
-        raise HTTPException(409, "You already have a journal")
     template = db.scalar(select(WebsiteTemplate).where(WebsiteTemplate.id == data.template_id).with_for_update())
     if not template:
         raise HTTPException(404, "Template not found; refresh the template library")
@@ -90,6 +104,8 @@ def create_journal(data: JournalCreate, editor: Editor = Depends(editor_account)
     layout = TemplateLayout.model_validate(deepcopy(template.layout)).model_dump()
     normalized_name = unicodedata.normalize("NFKD", data.name).encode("ascii", "ignore").decode().lower()
     slug = re.sub(r"[^a-z0-9]+", "-", normalized_name).strip("-")[:150].rstrip("-") or "journal"
+    if db.scalar(select(EditorJournal.id).where(EditorJournal.editor_id == editor.id, EditorJournal.slug == slug)):
+        raise HTTPException(409, "You already have a journal with this website slug. Choose a different name.")
     journal = EditorJournal(editor_id=editor.id, name=data.name, slug=slug, template_name=template.name,
                             template_description=template.description, template_layout=layout)
     try:
@@ -109,8 +125,8 @@ def create_journal(data: JournalCreate, editor: Editor = Depends(editor_account)
     return journal_output(db, journal)
 
 @router.patch("/journal/template", response_model=JournalOutput)
-def update_journal_template(data: TemplateInput, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
-    journal = own_journal(db, editor.id)
+def update_journal_template(data: TemplateInput, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db), journal_id: int | None = Query(None, gt=0)):
+    journal = own_journal(db, editor.id, journal_id)
     journal.template_name = data.name
     journal.template_description = data.description
     journal.template_layout = data.layout.model_dump()
@@ -119,8 +135,8 @@ def update_journal_template(data: TemplateInput, editor: Editor = Depends(editor
     return journal_output(db, journal)
 
 @router.post("/journal/pages", response_model=JournalOutput, status_code=201)
-def add_journal_page(data: PageInput, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
-    journal = own_journal(db, editor.id)
+def add_journal_page(data: PageInput, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db), journal_id: int | None = Query(None, gt=0)):
+    journal = own_journal(db, editor.id, journal_id)
     pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id)).all()
     if len(pages) >= 100:
         raise HTTPException(409, "A journal can contain at most 100 pages")
@@ -137,8 +153,8 @@ def add_journal_page(data: PageInput, editor: Editor = Depends(editor_account), 
     return journal_output(db, journal)
 
 @router.patch("/journal/pages/order", response_model=JournalOutput)
-def reorder_journal_pages(data: JournalPageOrder, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
-    journal = own_journal(db, editor.id)
+def reorder_journal_pages(data: JournalPageOrder, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db), journal_id: int | None = Query(None, gt=0)):
+    journal = own_journal(db, editor.id, journal_id)
     pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id)).all()
     if set(data.page_ids) != {page.id for page in pages}:
         raise HTTPException(409, "Include all of your journal pages exactly once. Refresh if the page list changed.")
@@ -150,8 +166,8 @@ def reorder_journal_pages(data: JournalPageOrder, editor: Editor = Depends(edito
     return journal_output(db, journal)
 
 @router.patch("/journal/pages/{page_id}", response_model=JournalOutput)
-def update_journal_page(page_id: int, data: PageInput, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
-    journal = own_journal(db, editor.id)
+def update_journal_page(page_id: int, data: PageInput, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db), journal_id: int | None = Query(None, gt=0)):
+    journal = own_journal(db, editor.id, journal_id)
     page = db.scalar(select(EditorJournalPage).where(EditorJournalPage.id == page_id, EditorJournalPage.journal_id == journal.id))
     if not page:
         raise HTTPException(404, "Journal page not found")
@@ -163,4 +179,13 @@ def update_journal_page(page_id: int, data: PageInput, editor: Editor = Depends(
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Your journal already contains a page with this slug")
+    return journal_output(db, journal)
+
+
+@router.patch("/journal/status", response_model=JournalOutput)
+def update_journal_status(data: JournalStatusUpdate, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db), journal_id: int | None = Query(None, gt=0)):
+    journal = own_journal(db, editor.id, journal_id)
+    journal.status = data.status
+    journal.updated_at = now()
+    db.commit()
     return journal_output(db, journal)

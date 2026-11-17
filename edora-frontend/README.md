@@ -6,7 +6,7 @@ Next.js App Router + React + TypeScript. Python is in the separate FastAPI backe
 - Node.js 22 LTS (22.9+) and npm.
 - Backend running at http://localhost:8000 (see its README).
 
-## Start locally â€” Windows, macOS, Linux
+## Start locally Ã¢â‚¬â€ Windows, macOS, Linux
 ```sh
 npm ci
 npm run dev
@@ -100,7 +100,7 @@ All page operations use `/api/admin/pages` and `/api/admin/pages/{id}`. See the 
 
 Signed-in editors see Profile and Journal in a compact left sidebar. `/dashboard` edits the current account profile. Changing an email signs the editor out and requires verification of the new address; protected account fields cannot be edited.
 
-`/dashboard/journal` creates one journal per editor using the template-first wizard and selected admin pages. Copies are stored together in a transaction and remain independent across editors and from the admin library. Edit section colors, layout, and text in the private template editor, or use Tiptap to edit private page HTML. The saved website preview combines the journal layout and copied pages. Page-selection order becomes the website's page order.
+`/dashboard/journal/new` creates a journal using the template-first wizard and selected admin pages. Copies are stored together in a transaction and remain independent across editors and from the admin library. Edit section colors, layout, and text in the private template editor, or use Tiptap to edit private page HTML. The saved website preview combines the journal layout and copied pages. Page-selection order becomes the website's page order.
 
 All calls use internal `/api/editor/*` routes. Backend migration 0006 and API contracts are documented in `../edora-backend/ADMIN_API.md`.
 
@@ -112,7 +112,7 @@ Run `npm test` to check the internal API proxy and browser helper with mocked re
 
 ### Create private pages during journal setup
 
-In `/dashboard/journal`, the Select pages step offers **Create page**. Write a title, unique slug, and rich-text content, then add the page to the journal draft. Edit or remove custom drafts before proceeding. Select admin pages, write new pages, or combine both (up to 100 pages total). Selected admin copies appear first, followed by custom pages.
+In `/dashboard/journal/new`, the Select pages step offers **Create page**. Write a title, unique slug, and rich-text content, then add the page to the journal draft. Edit or remove custom drafts before proceeding. Select admin pages, write new pages, or combine both (up to 100 pages total). Selected admin copies appear first, followed by custom pages.
 
 Click **Create my journal** to persist both copied and new pages together. New pages never enter the admin library or another editor's journal. They can be edited afterward under My pages. Custom drafts are local until journal creation succeeds; refreshing the browser before that discards them.
 
@@ -126,8 +126,17 @@ Each journal site uses its private saved template, colors, and HTML pages, witho
 
 ### Manage My Pages
 
-After journal creation, **My pages â†’ Add page** immediately saves a new private page using the visual editor. It appears in the journal menu and never enters the admin library. In each row, change the **Order** number, using each number from 1 through the page count exactly once, then click **Save order**. **Reset order** discards pending ordering changes. Saved order is shared by the dashboard preview and standalone website navigation.
+After journal creation, **My pages Ã¢â€ â€™ Add page** immediately saves a new private page using the visual editor. It appears in the journal menu and never enters the admin library. In each row, change the **Order** number, using each number from 1 through the page count exactly once, then click **Save order**. **Reset order** discards pending ordering changes. Saved order is shared by the dashboard preview and standalone website navigation.
 
 ### Journal workspace sections
 
 My Journal uses four on-demand panels: Journal Info (name, website address, dates, and key details), Journal Template (personal design and editor), Journal Pages (private page creation, editing, and ordering), and Preview (saved website preview and external link). Open a section to load its component. Loaded panels retain local drafts while switching sections; full browser refresh still discards unsaved changes. Arrow keys, Home, and End navigate the section tabs.
+
+
+### Journal collection
+
+The Journal menu opens `/dashboard/journal` with tiles for all of the editor's journals. Click a tile to open `/dashboard/journal/{id}` and its Info, Template, Pages, and Preview sections. Use **All journals** to return, or **Create journal** for `/dashboard/journal/new`. Multiple journals are supported with different URL slugs. All management requests include the selected journal ID. Backend migration 0008 preserves existing content and preview URLs.
+
+### Journal status
+
+Every journal starts as Draft. Tiles and the management banner display Draft, Published, or NotPublished. Open Journal Info, choose a status, and click Save status to update only the selected journal. Preview links remain available in all states. Backend migration 0009 adds the status column, backfills existing journals to Draft, and restricts allowed values.

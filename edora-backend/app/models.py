@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import secrets
 import string
-from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, JSON, UniqueConstraint
+from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, JSON, UniqueConstraint, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -74,10 +74,15 @@ class WebPage(Base):
 
 class EditorJournal(Base):
     __tablename__ = "editor_journals"
+    __table_args__ = (
+        UniqueConstraint("editor_id", "slug", name="uq_editor_journal_slug"),
+        CheckConstraint("status IN ('Draft', 'Published', 'NotPublished')", name="ck_journal_status"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
-    editor_id: Mapped[int] = mapped_column(ForeignKey("editors.id", ondelete="CASCADE"), unique=True)
+    editor_id: Mapped[int] = mapped_column(ForeignKey("editors.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(150))
     slug: Mapped[str] = mapped_column(String(150))
+    status: Mapped[str] = mapped_column(String(20), default="Draft", server_default="Draft")
     template_name: Mapped[str] = mapped_column(String(100))
     template_description: Mapped[str] = mapped_column(String(500))
     template_layout: Mapped[dict] = mapped_column(JSON)

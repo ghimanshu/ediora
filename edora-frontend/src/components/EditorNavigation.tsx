@@ -7,5 +7,5 @@ const items = [
 ];
 export default function EditorNavigation() {
   const path = usePathname();
-  return <nav className="admin-navigation" aria-label="Editor navigation">{items.map(item => <Link key={item.href} href={item.href} aria-current={path === item.href ? "page" : undefined}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">{item.icon}</svg><span><strong>{item.title}</strong><small>{item.detail}</small></span></Link>)}</nav>;
+  return <nav className="admin-navigation" aria-label="Editor navigation">{items.map(item => <Link key={item.href} href={item.href} aria-current={path === item.href || (item.href === "/dashboard/journal" && path.startsWith(`${item.href}/`)) ? "page" : undefined}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">{item.icon}</svg><span><strong>{item.title}</strong><small>{item.detail}</small></span></Link>)}</nav>;
 }

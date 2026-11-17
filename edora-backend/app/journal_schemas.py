@@ -1,7 +1,14 @@
 from datetime import datetime
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from app.page_schemas import PageInput, PageOutput
 from app.template_schemas import TemplateLayout
+
+JournalStatus = Literal["Draft", "Published", "NotPublished"]
+
+class JournalStatusUpdate(BaseModel):
+    status: JournalStatus
+    model_config = ConfigDict(extra="forbid")
 
 class JournalCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
@@ -29,6 +36,7 @@ class JournalCreate(BaseModel):
         return self
 
 class JournalOutput(BaseModel):
+    status: JournalStatus
     editor_code: str
     slug: str
     preview_path: str
@@ -65,3 +73,14 @@ class JournalPageOrder(BaseModel):
         if any(value <= 0 for value in values) or len(values) != len(set(values)):
             raise ValueError("Include each journal page exactly once")
         return values
+
+
+class JournalSummary(BaseModel):
+    status: JournalStatus
+    id: int
+    name: str
+    slug: str
+    template_name: str
+    page_count: int
+    created_at: datetime
+    updated_at: datetime

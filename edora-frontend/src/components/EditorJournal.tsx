@@ -1,15 +1,16 @@
 "use client";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import type { WebsiteTemplate } from "@/lib/templates";
 import type { Journal, PageChoice } from "@/lib/journals";
 import TemplatePreview from "@/components/TemplatePreview";
 import type { NewJournalPage } from "@/components/JournalNewPageForm";
 const JournalNewPageForm = dynamic(() => import("@/components/JournalNewPageForm"), { ssr: false, loading: () => <p role="status">Loading page editor…</p> });
-import JournalDetails from "@/components/JournalDetails";
 export default function EditorJournal() {
-  const [journal, setJournal] = useState<Journal | null>(null);
+  const router = useRouter();
   const [templates, setTemplates] = useState<WebsiteTemplate[]>([]);
   const [pages, setPages] = useState<PageChoice[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<number | null>(null);
@@ -24,30 +25,27 @@ export default function EditorJournal() {
   async function load() {
     setLoading(true); setError("");
     try {
-      const existing: Journal | null = await api("editor/journal");
-      setJournal(existing);
-      if (!existing) {
-        const [templateList, pageList] = await Promise.all([api("templates"), api("editor/pages")]);
-        setTemplates(templateList); setPages(pageList);
-        setSelectedTemplate(current => templateList.some((item: WebsiteTemplate) => item.id === current) ? current : null);
-        setSelectedPages(current => current.filter(id => pageList.some((item: PageChoice) => item.id === id)));
-      }
+      const [templateList, pageList] = await Promise.all([api("templates"), api("editor/pages")]);
+      setTemplates(templateList); setPages(pageList);
+      setSelectedTemplate(current => templateList.some((item: WebsiteTemplate) => item.id === current) ? current : null);
+      setSelectedPages(current => current.filter(id => pageList.some((item: PageChoice) => item.id === id)));
+
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }
   useEffect(() => { void load(); }, []);
   async function create() {
     setBusy(true); setError("");
-    try { setJournal(await api("editor/journal", { name: name.trim(), template_id: selectedTemplate, page_ids: selectedPages, new_pages: newPages.map(({ title, slug, content_html }) => ({ title, slug, content_html })) })); }
+    try { const created: Journal = await api("editor/journal", { name: name.trim(), template_id: selectedTemplate, page_ids: selectedPages, new_pages: newPages.map(({ title, slug, content_html }) => ({ title, slug, content_html })) }); router.push(`/dashboard/journal/${created.id}`); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
   if (loading) return <p role="status">Loading your journal workspace…</p>;
-  if (journal) return <JournalDetails journal={journal} onChanged={setJournal} />;
   const totalPages = selectedPages.length + newPages.length;
   const totalNewHtml = newPages.reduce((sum, page) => sum + page.content_html.length, 0);
   const template = templates.find(item => item.id === selectedTemplate);
   return <>
+    <Link href="/dashboard/journal" className="journal-back-link">← All journals</Link>
     {error && <p className="message error" role="alert">{error}</p>}
     <div className="journal-steps" aria-label="Journal creation steps">{["Choose a template", "Select pages", "Create journal"].map((title, index) => <span key={title} aria-current={step === index + 1 ? "step" : undefined}><b>{index + 1}</b>{title}</span>)}</div>
     <div className="template-library-toolbar"><p>Start with the admin library. Creating your journal makes separate copies for your account.</p><button className="small secondary" disabled={busy || !!pageForm} onClick={() => void load()}>Refresh library</button></div>

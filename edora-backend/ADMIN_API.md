@@ -12,7 +12,7 @@ Browser -> frontend /api/* -> backend /api/v1/*, including server-rendered accou
 | --- | --- | --- |
 | /api/v1/auth/login | POST | Existing login endpoint, also authenticates admin |
 | /api/v1/auth/me | GET | Now includes role and is_active |
-| /api/v1/admin/users?offset=0&limit=20&search= | GET | Returns {items, total}; limit 1�100 |
+| /api/v1/admin/users?offset=0&limit=20&search= | GET | Returns {items, total}; limit 1–100 |
 | /api/v1/admin/users/{id} | PATCH | Update first_name, last_name, email, phone, gender, is_active (all required) |
 | /api/v1/admin/users/{id} | DELETE | Permanently delete user and their sessions/verification tokens |
 
@@ -34,7 +34,7 @@ Migration `0003` adds `website_templates` (name, description, validated JSON lay
 | /api/v1/website/template | GET | Read current account selection, or null |
 | /api/v1/website/template | POST | Save current account selection using {"template_id": 1} |
 
-Create/edit body: `name` (1�100 characters), `description` (up to 500), and `layout`. Layout contains `menu_position` (`top`, `left`, or `right`) and an ordered `sections` array with exactly one each of `header`, `menu`, `content`, and `footer`. Every section has `type`, `title` (1�100 characters), and `content` (up to 2000 characters). Menu content uses one item per line. Unexpected fields, invalid placement, duplicate/missing sections, and blank names/titles return 422. Duplicate template names return 409; missing template IDs return 404.
+Create/edit body: `name` (1–100 characters), `description` (up to 500), and `layout`. Layout contains `menu_position` (`top`, `left`, or `right`) and an ordered `sections` array with exactly one each of `header`, `menu`, `content`, and `footer`. Every section has `type`, `title` (1–100 characters), and `content` (up to 2000 characters). Menu content uses one item per line. Unexpected fields, invalid placement, duplicate/missing sections, and blank names/titles return 422. Duplicate template names return 409; missing template IDs return 404.
 
 The preview renders plain text, without executing template HTML or scripts. Horizontal layouts follow section order; sidebar menus appear beside the content while other sections span the width. User selections reference live templates, so admin changes also update selected layouts. This provides layout configuration and previews; page publishing and menu destinations are separate features.
 
@@ -74,14 +74,14 @@ The frontend uses Tiptap's MIT-licensed open-source editor and sandboxed HTML pr
 
 `0005_seed_journal_pages.py` inserts Home (`home`), About the Journal (`about-the-journal`), Editorial Team (`editorial-team`), and Submissions (`submissions`) into `web_pages`. HTML was rewritten from the corresponding eelet.org.uk pages reviewed on 15 November 2026; source links are included in each page. The migration contains static content and makes no network requests. No API or schema changes are required.
 
-Existing matching slugs are skipped, preserving their title, HTML, and timestamps. Repeated execution is safe. Downgrade intentionally retains all pages to protect editorial changes; it does not remove seed content. Apply with `alembic upgrade head`, or rebuild/start the Docker API. Edit the seeded content under Admin → Pages afterward.
+Existing matching slugs are skipped, preserving their title, HTML, and timestamps. Repeated execution is safe. Downgrade intentionally retains all pages to protect editorial changes; it does not remove seed content. Apply with `alembic upgrade head`, or rebuild/start the Docker API. Edit the seeded content under Admin â†’ Pages afterward.
 
 Content decisions: the source homepage conflicts on publication frequency, so no frequency is asserted there. The editorial directory repeats Muhammad Umar Riaz Abbasi; the seed lists him once. No unverified preservation-service implementation or specific Creative Commons license is asserted. Source links point to the original journal, including its submission system; this migration does not implement local manuscript submissions.
 
 
 ## Editor workspace and independent journals
 
-Migration `0006` creates `editor_journals` (one per editor, with journal name and complete template name/description/layout copies) and `editor_journal_pages` (independent title/slug/HTML copies, position and timestamps). Journal page slugs are unique within each journal, not globally. These tables reference the owning editor/journal only: no foreign keys or live reads link them to master templates or pages. Deleting an editor removes their journal and copies without affecting other accounts.
+Migration `0006` creates `editor_journals` (owned by an editor, with journal name and complete template name/description/layout copies) and `editor_journal_pages` (independent title/slug/HTML copies, position and timestamps). Journal page slugs are unique within each journal, not globally. These tables reference the owning editor/journal only: no foreign keys or live reads link them to master templates or pages. Deleting an editor removes their journal and copies without affecting other accounts.
 
 | Backend endpoint | Method | Purpose |
 | --- | --- | --- |
@@ -95,7 +95,7 @@ Migration `0006` creates `editor_journals` (one per editor, with journal name an
 
 All endpoints require an active verified editor account. No client-supplied owner ID is accepted. Copied-page lookups are scoped to the signed-in editor's journal; other editors' page IDs return 404. Admin accounts cannot use editor mutation endpoints. HTML sanitation and color validation are reused from admin schemas.
 
-Create body: `name` (1–150 characters), `template_id`, and distinct `page_ids` (1–100). Pages are copied in selection order. Creation locks the editor and source rows, validates all selections, and commits the journal and pages in a single transaction. Missing sources return 404 without partial records; repeat creation returns 409. Admin edits/deletions after creation never update or remove existing journal copies. Copy edits never update masters or other journals. The older `/website/template` selection remains a separate legacy selection and is not a journal; dashboard creation requires explicit selection and confirmation.
+Create body: `name` (1â€“150 characters), `template_id`, and distinct `page_ids` (1â€“100). Pages are copied in selection order. Creation locks the editor and source rows, validates all selections, and commits the journal and pages in a single transaction. Missing sources return 404 without partial records; repeat creation returns 409. Admin edits/deletions after creation never update or remove existing journal copies. Copy edits never update masters or other journals. The older `/website/template` selection remains a separate legacy selection and is not a journal; dashboard creation requires explicit selection and confirmation.
 
 Profile email changes revoke sessions, clear verification, and send a new verification link. Duplicate email updates return 409. Role, verification, active status, passwords, and ownership cannot be changed through profile payloads.
 
@@ -130,3 +130,23 @@ Apply with `docker compose up -d --build api` or `alembic upgrade head`.
 - `PATCH /api/v1/editor/journal/pages/order`: accept `{page_ids: [3, 1, 2]}` listing every page in the current editor's journal exactly once, in the desired order. Returns the updated journal. Duplicate/invalid IDs return 422; missing or foreign IDs return 409. Changes are atomic and update the existing position column.
 
 Both operations require the owning editor's authenticated session. The journal row is locked to serialize page mutations. Current journal reads, previews, and public website menus use the saved order. No schema migration is needed. Frontend calls only internal `/api/editor/journal/pages` and `/api/editor/journal/pages/order`. Single-page creation uses the same 650,000-byte proxy limit as page editing.
+
+
+## Multiple journals and tile navigation (migration 0008)
+
+Migration 0008 removes the one-journal-per-editor constraint and adds unique `(editor_id, slug)` plus an owner index. Existing content and preview URLs are preserved. Downgrade refuses when an editor owns multiple journals, without deleting records.
+
+`GET /api/v1/editor/journals` returns the signed-in editor's tile summaries: id, name, slug, template_name, page_count, created_at, updated_at. Full page HTML is not included.
+
+Read and mutation endpoints under `/editor/journal` accept `?journal_id={id}`. Ownership is checked on every request; a foreign journal returns 404. Page IDs must belong to that selected journal even when an editor owns both journals. Legacy calls without a journal ID work for a single journal; multiple journals return 409 requiring explicit selection. Creation permits multiple journals; duplicate name-derived slugs for the same editor return 409. The internal frontend proxy forwards query parameters.
+
+Frontend routes: `/dashboard/journal` lists tiles, `/dashboard/journal/new` creates a journal, and `/dashboard/journal/{id}` opens its management screen. Apply with `alembic upgrade head` or `docker compose up -d --build api`.
+
+
+## Journal status (migration 0009)
+
+Each journal has `status`, restricted to `Draft`, `Published`, or `NotPublished`. Migration 0009 adds a non-null column with a database default of Draft and a check constraint. Existing journals are backfilled to Draft; newly created journals always start as Draft (creation does not accept status overrides). Tile summaries and full management responses include status.
+
+`PATCH /api/v1/editor/journal/status?journal_id={id}` accepts only `{"status":"Published"}` (or either other allowed value) and returns the updated journal. Only the owning editor can change status; other owners receive 404 and unauthenticated callers receive 401. Invalid status values or unexpected fields return 422. The selected journal is locked and its updated_at timestamp is refreshed. Other journals are untouched.
+
+The frontend uses internal `/api/editor/journal/status?journal_id={id}`, displays badges on tiles and in the workspace, and offers a selector with Save status in Journal Info. Status tracks journal workflow; shareable preview access remains unchanged in every state. Apply with `alembic upgrade head` or rebuild/start the Docker API.

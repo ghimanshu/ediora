@@ -18,7 +18,7 @@ export default function JournalPagesPanel({ journal, onChanged, onPreview }: { j
   async function savePage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!editing) return;
     setBusy(true); setError(""); setMessage("");
-    try { onChanged(await api(`editor/journal/pages/${editing.id}`, { title: editing.title, slug: editing.slug, content_html: editing.content_html }, "PATCH")); setEditing(null); setMessage("Your page copy has been saved."); }
+    try { onChanged(await api(`editor/journal/pages/${editing.id}?journal_id=${journal.id}`, { title: editing.title, slug: editing.slug, content_html: editing.content_html }, "PATCH")); setEditing(null); setMessage("Your page copy has been saved."); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -29,7 +29,7 @@ export default function JournalPagesPanel({ journal, onChanged, onPreview }: { j
     }
     setBusy(true); setError(""); setMessage("");
     try {
-      const updated = await api("editor/journal/pages/order", { page_ids: ordered.sort((a, b) => a.order - b.order).map(item => item.id) }, "PATCH");
+      const updated = await api(`editor/journal/pages/order?journal_id=${journal.id}`, { page_ids: ordered.sort((a, b) => a.order - b.order).map(item => item.id) }, "PATCH");
       onChanged(updated); setOrderValues({}); setMessage("Page order saved. Your website menu now uses this order.");
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -37,7 +37,7 @@ export default function JournalPagesPanel({ journal, onChanged, onPreview }: { j
   async function addPage(draft: NewJournalPage) {
     setBusy(true); setError(""); setMessage("");
     try {
-      onChanged(await api("editor/journal/pages", { title: draft.title, slug: draft.slug, content_html: draft.content_html }));
+      onChanged(await api(`editor/journal/pages?journal_id=${journal.id}`, { title: draft.title, slug: draft.slug, content_html: draft.content_html }));
       setAdding(null); setOrderValues({}); setMessage("Page added to your journal only.");
     } catch (e) { setError((e as Error).message); throw e; }
     finally { setBusy(false); }
