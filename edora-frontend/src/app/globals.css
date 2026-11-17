@@ -611,3 +611,23 @@ body:has(.admin-shell) > footer { display: none; }
 .journal-status-control .admin-actions { align-items: flex-end; }
 .journal-status-control select { min-width: 150px; }
 @media(max-width:650px) { .journal-status-control { align-items: flex-start; flex-direction: column; } }
+.journal-banner-status { flex-shrink: 0; min-width: 275px; }
+.journal-banner-status form { display: flex; align-items: flex-end; gap: 10px; }
+.admin-shell .journal-banner-status label { flex: 1; margin: 0; }
+.journal-banner-status select { min-width: 155px; }
+.journal-status-feedback { display: block; font-size: 11px; color: #5c7e66; margin-top: 7px; max-width: 320px; }
+.journal-status-feedback.error { padding: 5px 8px; border-radius: 4px; }
+.journal-section-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 12px; }
+.journal-section-toolbar > span { color: #809187; font-size: 11px; }
+@media(max-width:650px) { .journal-banner-status { min-width: 0; width: 100%; } .journal-status-feedback { max-width: none; } }
+.admin-shell .journal-status-save-icon { display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; flex-shrink: 0; }
+.journal-section-navigation { display: grid; grid-template-columns: minmax(0, 3fr) minmax(190px, 1fr); gap: 10px; margin-bottom: 20px; }
+.journal-section-navigation .journal-section-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 0; }
+.journal-preview-launch { display: flex; align-items: center; gap: 10px; padding: 15px 12px; border-radius: 8px; background: #214d3e; color: #fff; border: 1px solid #214d3e; transition: background .15s; }
+.journal-preview-launch:hover { background: #31624e; text-decoration: none; }
+.journal-preview-launch .journal-section-icon { color: #c2dac9; }
+.journal-preview-launch strong { display: block; font-size: 12px; font-weight: 650; }
+.journal-preview-launch small { display: block; font-size: 10px; color: #b4cebd; margin-top: 3px; }
+.journal-preview-launch > svg { flex-shrink: 0; margin-left: auto; color: #c2dac9; }
+@media(max-width:1000px) { .journal-section-navigation { grid-template-columns: 1fr; } }
+@media(max-width:650px) { .journal-section-navigation .journal-section-tabs { grid-template-columns: 1fr; } }

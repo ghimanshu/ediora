@@ -1,18 +1,17 @@
 "use client";
 import { useRef, useState, type KeyboardEvent } from "react";
 import dynamic from "next/dynamic";
+import JournalStatusControl from "@/components/JournalStatusControl";
 import JournalStatusBadge from "@/components/JournalStatusBadge";
 import type { Journal } from "@/lib/journals";
 const loading = () => <div className="admin-panel journal-section-loading" role="status">Loading section…</div>;
 const JournalInfoPanel = dynamic(() => import("@/components/JournalInfoPanel"), { loading });
 const JournalTemplatePanel = dynamic(() => import("@/components/JournalTemplatePanel"), { loading });
 const JournalPagesPanel = dynamic(() => import("@/components/JournalPagesPanel"), { loading });
-const JournalPreviewPanel = dynamic(() => import("@/components/JournalPreviewPanel"), { loading });
 const sections = [
   { id: "info", title: "Journal Info", description: "Name, address & details", icon: "info" },
   { id: "template", title: "Journal Template", description: "Your personal design", icon: "template" },
   { id: "pages", title: "Journal Pages", description: "Content & page order", icon: "pages" },
-  { id: "preview", title: "Preview", description: "View your website", icon: "preview" },
 ] as const;
 type Section = typeof sections[number]["id"];
 function SectionIcon({ icon }: { icon: string }) {
@@ -21,7 +20,6 @@ function SectionIcon({ icon }: { icon: string }) {
 export default function JournalDetails({ journal, onChanged }: { journal: Journal; onChanged: (journal: Journal) => void }) {
   const [active, setActive] = useState<Section>("info");
   const [visited, setVisited] = useState<Set<Section>>(() => new Set(["info"]));
-  const [activePage, setActivePage] = useState(journal.pages[0]?.id ?? 0);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   function open(section: Section) { setVisited(current => new Set([...current, section])); setActive(section); }
   function keyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -33,7 +31,7 @@ export default function JournalDetails({ journal, onChanged }: { journal: Journa
     else return;
     event.preventDefault(); tabs.current[next]?.focus(); open(sections[next].id);
   }
-  return <div className="journal-manager"><div className="journal-manager-banner"><div><span className="eyebrow">Journal workspace</span><h2>{journal.name}</h2><JournalStatusBadge status={journal.status} /><p><span>{journal.pages.length} pages</span><span>Personal template</span><span>{journal.slug}</span></p></div><a className="button small" href={journal.preview_path} target="_blank" rel="noopener noreferrer">Preview journal ↗</a></div><div className="journal-section-tabs" role="tablist" aria-label="Journal management sections">{sections.map((section, index) => <button ref={element => { tabs.current[index] = element; }} key={section.id} type="button" role="tab" id={`journal-tab-${section.id}`} aria-selected={active === section.id} aria-controls={`journal-panel-${section.id}`} tabIndex={active === section.id ? 0 : -1} onClick={() => open(section.id)} onKeyDown={event => keyDown(event, index)}><span className="journal-section-icon"><SectionIcon icon={section.icon} /></span><span><strong>{section.title}</strong><small>{section.description}</small></span>{section.id === "pages" && <span className="journal-tab-count">{journal.pages.length}</span>}</button>)}</div>
-    {sections.map(section => <div key={section.id} role="tabpanel" id={`journal-panel-${section.id}`} aria-labelledby={`journal-tab-${section.id}`} hidden={active !== section.id} tabIndex={0} className="journal-section-panel">{visited.has(section.id) && <>{section.id === "info" && <JournalInfoPanel journal={journal} onChanged={onChanged} />}{section.id === "template" && <JournalTemplatePanel journal={journal} onChanged={onChanged} />}{section.id === "pages" && <JournalPagesPanel journal={journal} onChanged={onChanged} onPreview={id => { setActivePage(id); open("preview"); }} />}{section.id === "preview" && <JournalPreviewPanel journal={journal} activePage={activePage} onPageChange={setActivePage} />}</>}</div>)}
+  return <div className="journal-manager"><div className="journal-manager-banner"><div><span className="eyebrow">Journal workspace</span><h2>{journal.name}</h2><JournalStatusBadge status={journal.status} /><p><span>{journal.pages.length} pages</span><span>Personal template</span><span>{journal.slug}</span></p></div><JournalStatusControl journal={journal} onChanged={onChanged} /></div><div className="journal-section-toolbar"><span>Manage your journal</span></div><div className="journal-section-navigation"><div className="journal-section-tabs" role="tablist" aria-label="Journal management sections">{sections.map((section, index) => <button ref={element => { tabs.current[index] = element; }} key={section.id} type="button" role="tab" id={`journal-tab-${section.id}`} aria-selected={active === section.id} aria-controls={`journal-panel-${section.id}`} tabIndex={active === section.id ? 0 : -1} onClick={() => open(section.id)} onKeyDown={event => keyDown(event, index)}><span className="journal-section-icon"><SectionIcon icon={section.icon} /></span><span><strong>{section.title}</strong><small>{section.description}</small></span>{section.id === "pages" && <span className="journal-tab-count">{journal.pages.length}</span>}</button>)}</div><a className="journal-preview-launch" href={journal.preview_path} target="_blank" rel="noopener noreferrer" aria-label="Preview journal website (opens in a new tab)"><span className="journal-section-icon"><SectionIcon icon="preview" /></span><span><strong>Preview journal</strong><small>Open website in a new tab</small></span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" /></svg></a></div>
+    {sections.map(section => <div key={section.id} role="tabpanel" id={`journal-panel-${section.id}`} aria-labelledby={`journal-tab-${section.id}`} hidden={active !== section.id} tabIndex={0} className="journal-section-panel">{visited.has(section.id) && <>{section.id === "info" && <JournalInfoPanel journal={journal} />}{section.id === "template" && <JournalTemplatePanel journal={journal} onChanged={onChanged} />}{section.id === "pages" && <JournalPagesPanel journal={journal} onChanged={onChanged} />}</>}</div>)}
   </div>;
 }
