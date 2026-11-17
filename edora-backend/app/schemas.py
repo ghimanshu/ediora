@@ -8,18 +8,23 @@ class EmailInput(BaseModel):
     def normalize(cls, value):
         return value.lower()
 
-class Register(EmailInput):
+class ProfileFields(EmailInput):
     first_name: str = Field(min_length=1, max_length=80)
     last_name: str = Field(min_length=1, max_length=80)
     phone: str = Field(pattern=r"^\+?[0-9 ()-]{7,25}$")
     gender: Literal["Male", "Female", "Other", "Prefer not to say"]
-    password: str = Field(min_length=12, max_length=128)
     @field_validator("first_name", "last_name")
     @classmethod
     def nonblank(cls, value):
         if not value.strip():
             raise ValueError("Name cannot be blank")
         return value.strip()
+
+class Register(ProfileFields):
+    password: str = Field(min_length=12, max_length=128)
+
+class EditorProfileInput(ProfileFields):
+    model_config = ConfigDict(extra="forbid")
 
 class Login(EmailInput):
     password: str = Field(min_length=1, max_length=128)

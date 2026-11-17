@@ -17,6 +17,13 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       ? (path === "admin/templates" ? ["GET", "POST"] : ["PATCH", "DELETE"])
       : /^admin\/pages(?:\/[1-9]\d*)?$/.test(path)
         ? (path === "admin/pages" ? ["GET", "POST"] : ["GET", "PATCH", "DELETE"])
+      : /^public\/journals\/[a-z0-9]{8}\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(path) ? ["GET"]
+      : path === "editor/profile" ? ["PATCH"]
+      : /^editor\/pages(?:\/[1-9]\d*)?$/.test(path) ? ["GET"]
+      : path === "editor/journal" ? ["GET", "POST"]
+      : path === "editor/journal/pages" ? ["POST"]
+      : path === "editor/journal/pages/order" ? ["PATCH"]
+      : path === "editor/journal/template" || /^editor\/journal\/pages\/[1-9]\d*$/.test(path) ? ["PATCH"]
       : path === "website/template" ? ["GET", "POST"]
       : allowed[path] ? [allowed[path]] : [];
   if (!methods.length) return NextResponse.json({ detail: "Not found" }, { status: 404 });
@@ -28,7 +35,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (session) headers.Authorization = `Bearer ${session}`;
   try {
     const body = request.method === "GET" ? undefined : await request.text();
-    const maxBodyBytes = /^admin\/pages(?:\/[1-9]\d*)?$/.test(path) ? 650000 : 20000;
+    const maxBodyBytes = path === "editor/journal" && request.method === "POST" ? 6500000 : /^(?:admin\/pages(?:\/[1-9]\d*)?|editor\/journal\/pages(?:\/[1-9]\d*)?)$/.test(path) ? 650000 : 20000;
     if (body && Buffer.byteLength(body, "utf8") > maxBodyBytes) return NextResponse.json({ detail: "Request too large" }, { status: 413 });
     const upstream = await fetch(`${backend}/api/v1/${path}`, {
       method: request.method, headers, body, cache: "no-store", signal: AbortSignal.timeout(20000),
@@ -42,9 +49,11 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
         path: "/", maxAge: data.expires_in,
       });
     } else {
-      response = new NextResponse(data === null ? null : JSON.stringify(data), {
-        status: upstream.status, headers: { "Content-Type": "application/json" },
-      });
+      // JSON null is a meaningful result (for example, no journal yet).
+      // Only a 204 response must omit its body.
+      response = upstream.status === 204
+        ? new NextResponse(null, { status: 204 })
+        : NextResponse.json(data, { status: upstream.status });
     }
     if (path === "auth/logout" && upstream.ok) response.cookies.delete(cookieName);
     response.headers.set("Cache-Control", "no-store");

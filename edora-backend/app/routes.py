@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from app.config import settings
 from app.database import get_db
-from app.models import Editor, Verification, Session, Contact, WebsiteTemplateSelection
+from app.models import Editor, Verification, Session, Contact, WebsiteTemplateSelection, EditorJournal, EditorJournalPage
 from app.schemas import AdminUserUpdate, UserList, Register, Login, TokenInput, EditorOutput, EmailInput, ContactInput
 from app.security import password_hasher, DUMMY_HASH, new_token, digest
 from app.emails import send_email
@@ -165,6 +165,9 @@ def update_user(user_id: int, data: AdminUserUpdate, admin: Editor = Depends(cur
 @router.delete("/admin/users/{user_id}", status_code=204)
 def delete_user(user_id: int, admin: Editor = Depends(current_admin), db: DBSession = Depends(get_db)):
     editor = managed_user(db, user_id)
+    journal_ids = select(EditorJournal.id).where(EditorJournal.editor_id == user_id)
+    db.execute(delete(EditorJournalPage).where(EditorJournalPage.journal_id.in_(journal_ids)))
+    db.execute(delete(EditorJournal).where(EditorJournal.editor_id == user_id))
     for model in (Session, Verification, WebsiteTemplateSelection):
         db.execute(delete(model).where(model.editor_id == user_id))
     db.delete(editor)
