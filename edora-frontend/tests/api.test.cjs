@@ -14,7 +14,7 @@ function loadModule(relativePath, fetch) {
   }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(source, {
-    module, exports: module.exports, require, fetch, Buffer, AbortSignal, process,
+    module, exports: module.exports, require, fetch, Buffer, AbortSignal, process, URL, URLSearchParams,
   }, { filename });
   return module.exports;
 }
@@ -147,5 +147,59 @@ test("admin editor-journal inspection forwards filters and rejects write methods
   for (const method of ["PATCH", "DELETE", "POST"]) {
     const blocked = await handlers[method](new NextRequest(`${origin}/api/admin/editor-journals/1`, { method, headers: { origin } }), context("admin/editor-journals/1"));
     assert.equal(blocked.status, 405);
+  }
+});
+
+
+test("admin ZIP export forwards bytes and download headers without JSON parsing", async () => {
+  const bytes = new Uint8Array([80, 75, 3, 4, 0, 255, 128, 1]);
+  const { GET } = loadModule("src/app/api/[...path]/route.ts", async () => new Response(bytes, { headers: { "content-type": "application/zip", "content-disposition": 'attachment; filename="journal-website.zip"' } }));
+  const result = await GET(new NextRequest("http://localhost:3000/api/admin/editor-journals/1/export"), context("admin/editor-journals/1/export"));
+  assert.equal(result.status, 200);
+  assert.equal(result.headers.get("content-type"), "application/zip");
+  assert.equal(result.headers.get("cache-control"), "no-store");
+  assert.equal(result.headers.get("content-disposition"), 'attachment; filename="journal-website.zip"');
+  assert.deepEqual(new Uint8Array(await result.arrayBuffer()), bytes);
+});
+
+test("admin ZIP export preserves permission and publication errors as JSON", async () => {
+  for (const status of [401, 403, 409]) {
+    const { GET } = loadModule("src/app/api/[...path]/route.ts", async () => Response.json({ detail: "Export denied" }, { status }));
+    const result = await GET(new NextRequest("http://localhost:3000/api/admin/editor-journals/1/export"), context("admin/editor-journals/1/export"));
+    assert.equal(result.status, status);
+    assert.equal((await result.json()).detail, "Export denied");
+  }
+});
+
+
+test("Current and Archives feed APIs validate editor/journal scope and support static-site CORS", async () => {
+  for (const kind of ["current", "archives"]) {
+    let called;
+    const module = loadModule("src/lib/journal-feed-proxy.ts", async (url, options) => {
+      called = { url, options };
+      return Response.json({ editor_code: "ab12cd34", journal_slug: "research", issue: null, items: [] });
+    });
+    const handler = module.journalFeedProxy(kind);
+    let result = await handler(new NextRequest(`https://portal.example.com/api/journal/${kind}?editor_code=ab12cd34&journal_slug=research&limit=5&offset=10`, { headers: { origin: "null", authorization: "not-forwarded" } }));
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get("access-control-allow-origin"), "*");
+    assert.equal(result.headers.get("cache-control"), "no-store");
+    assert.ok(called.url.includes(`/api/v1/public/journals/ab12cd34/research/${kind}`));
+    assert.equal(called.options.headers.Authorization, undefined);
+    if (kind === "archives") assert.ok(called.url.includes("offset=10&limit=5"));
+    result = await handler(new NextRequest(`https://portal.example.com/api/journal/${kind}?editor_code=invalid&journal_slug=research`));
+    assert.equal(result.status, 422);
+    result = await handler(new NextRequest(`https://portal.example.com/api/journal/${kind}?editor_code=ab12cd34`));
+    assert.equal(result.status, 422);
+    assert.equal(module.feedOptions().status, 204);
+  }
+});
+
+test("feed APIs keep backend errors readable across origins", async () => {
+  for (const status of [404, 422]) {
+    const { journalFeedProxy } = loadModule("src/lib/journal-feed-proxy.ts", async () => Response.json({ detail: "Unavailable" }, { status }));
+    const result = await journalFeedProxy("current")(new NextRequest("https://portal.example.com/api/journal/current?editor_code=ab12cd34&journal_slug=research"));
+    assert.equal(result.status, status);
+    assert.equal(result.headers.get("access-control-allow-origin"), "*");
   }
 });

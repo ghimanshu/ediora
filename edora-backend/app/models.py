@@ -100,3 +100,25 @@ class EditorJournalPage(Base):
     position: Mapped[int] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class JournalIssue(Base):
+    __tablename__ = "journal_issues"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("editor_journals.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    volume: Mapped[str] = mapped_column(String(40), default="")
+    number: Mapped[str] = mapped_column(String(40), default="")
+    is_published: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class JournalArticle(Base):
+    __tablename__ = "journal_articles"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    issue_id: Mapped[int] = mapped_column(ForeignKey("journal_issues.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    authors: Mapped[list] = mapped_column(JSON, default=list)
+    abstract: Mapped[str] = mapped_column(Text, default="")
+    article_url: Mapped[str] = mapped_column(String(2048), default="")
+    position: Mapped[int] = mapped_column(default=0)
+    is_published: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

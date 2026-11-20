@@ -145,3 +145,17 @@ Every journal starts as Draft. Tiles and the management banner display Draft, Pu
 ### Inspect editor templates as admin
 
 Admin → **Editor templates** lists editors' personal journal templates. Filter by editor and journal creation date (inclusive UTC dates), apply or clear filters, and navigate paginated results. **Open journal** opens a read-only inspection screen in a new tab. View the saved template, select pages, and inspect journal content without editing or changing its status. Inactive editor journals remain available to super admins. All inspection requests pass through GET-only internal admin APIs.
+
+
+### Download a journal as a website
+
+In **Admin → Editor → Journal**, journals marked **Published** have a **Download Website** action. Extract the downloaded ZIP, open its journal folder, then open `index.html`. The folder includes saved page HTML, the personal template's colors/layout, local CSS, and relative menu links, including Current and Archives. No server is needed for local browsing. Upload the folder contents to a subdomain's document root for static hosting. Downloads are snapshots and require another export to include later changes. External reference links still require internet access.
+
+
+### Live exported Current and Archives pages
+
+Download a fresh website ZIP after deploying this feature. Its Current and Archives pages load published issues/articles using JavaScript through `/api/journal/current` and `/api/journal/archives`. Every request supplies `editor_code` and `journal_slug`; the backend resolves both before returning public data.
+
+`assets/journal-config.js` contains the frontend API origin and journal identifiers. Production exports use backend FRONTEND_URL, which must be your frontend HTTPS origin; adjust api_origin in the extracted config when needed. These two pages require an internet connection and the web application to be running, including when opened from file://. Other pages retain offline navigation and styling. Cross-origin read access is enabled only on the two public feed routes; no login tokens are included.
+
+Current shows the latest published issue; Archives lists earlier issues with pagination. Only published articles are shown. Empty feeds display clear empty states; failures provide Retry. Backend migration 0010 supplies issue/article storage, but issue/article entry and publishing screens are not implemented by this change.

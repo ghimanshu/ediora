@@ -14,7 +14,7 @@ from alembic.config import Config
 from alembic import command
 from app.main import app
 from app.database import SessionLocal
-from app.models import Editor, Verification, Session, Contact, WebsiteTemplateSelection, WebPage, EditorJournal, EditorJournalPage
+from app.models import Editor, Verification, Session, Contact, WebsiteTemplateSelection, WebPage, EditorJournal, EditorJournalPage, JournalIssue, JournalArticle
 from app import routes
 from app.security import digest
 
@@ -22,7 +22,7 @@ from app.security import digest
 def setup(monkeypatch):
     command.upgrade(Config('alembic.ini'), 'head')
     with SessionLocal() as db:
-        for model in (EditorJournalPage, EditorJournal, WebPage, WebsiteTemplateSelection, Session, Verification, Contact, Editor):
+        for model in (JournalArticle, JournalIssue, EditorJournalPage, EditorJournal, WebPage, WebsiteTemplateSelection, Session, Verification, Contact, Editor):
             db.execute(delete(model))
         db.commit()
     messages = []
@@ -600,3 +600,82 @@ def test_multiple_journal_tiles_and_scoped_management(client, setup, monkeypatch
         db.commit()
     assert client.get(detail_path, headers=admin).status_code == 200
     assert client.get(f"{admin_list}?editor_id={first_owner}", headers=admin).json()["total"] == 2
+
+    export_url = f'{admin_list}/{one["id"]}/export'
+    assert client.get(export_url).status_code == 401
+    assert client.get(export_url, headers=other).status_code == 403
+    assert client.get(export_url, headers=admin).status_code == 409
+    assert client.get(f"{admin_list}/999999/export", headers=admin).status_code == 404
+    with SessionLocal() as db:
+        target = db.get(EditorJournal, one["id"])
+        target.status = "Published"
+        db.commit()
+        db.refresh(target)
+        updated_before_export = target.updated_at
+    exported = client.get(export_url, headers=admin)
+    assert exported.status_code == 200
+    assert exported.headers["content-type"] == "application/zip"
+    assert 'attachment; filename="first-journal-website.zip"' == exported.headers["content-disposition"]
+    assert exported.headers["cache-control"] == "no-store"
+    from io import BytesIO
+    from zipfile import ZipFile
+    with ZipFile(BytesIO(exported.content)) as archive:
+        assert "first-journal/index.html" in archive.namelist()
+        assert "first-journal/assets/styles.css" in archive.namelist()
+        assert payload["email"].encode() not in archive.read("first-journal/index.html")
+    with SessionLocal() as db:
+        assert db.get(EditorJournal, one["id"]).updated_at == updated_before_export
+
+    # Published feeds are scoped to both editor code and journal slug.
+    with SessionLocal() as db:
+        owner = db.get(Editor, first_owner)
+        owner.is_active = True
+        owner.is_verified = True
+        db.get(EditorJournal, two["id"]).status = "Published"
+        db.get(EditorJournal, other_journal.json()["id"]).status = "Published"
+        db.commit()
+    feed_base = f'/api/v1/public/journals/{one["editor_code"]}/{one["slug"]}'
+    assert client.get(feed_base + "/current").json()["issue"] is None
+    assert client.get(feed_base + "/archives").json()["items"] == []
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        latest = JournalIssue(journal_id=one["id"], title="Latest issue", volume="1", number="3", is_published=True, published_at=now - timedelta(days=1))
+        old = JournalIssue(journal_id=one["id"], title="Older issue", is_published=True, published_at=now - timedelta(days=7))
+        oldest = JournalIssue(journal_id=one["id"], title="Oldest issue", is_published=True, published_at=now - timedelta(days=14))
+        future = JournalIssue(journal_id=one["id"], title="Future issue", is_published=True, published_at=now + timedelta(days=1))
+        draft = JournalIssue(journal_id=one["id"], title="Draft issue", is_published=False, published_at=now)
+        other_same = JournalIssue(journal_id=two["id"], title="Same editor different journal", is_published=True, published_at=now)
+        other_owner = JournalIssue(journal_id=other_journal.json()["id"], title="Another editor issue", is_published=True, published_at=now)
+        db.add_all([latest, old, oldest, future, draft, other_same, other_owner])
+        db.flush()
+        db.add_all([
+            JournalArticle(issue_id=latest.id, title="Published article", authors=["Author One"], abstract="Research abstract", article_url="https://example.com/article", is_published=True),
+            JournalArticle(issue_id=latest.id, title="Hidden draft article", is_published=False),
+            JournalArticle(issue_id=latest.id, title="Unsafe link article", article_url="javascript:bad()", is_published=True),
+            JournalArticle(issue_id=old.id, title="Archived article", is_published=True),
+            JournalArticle(issue_id=other_same.id, title="Other journal article", is_published=True)])
+        db.commit()
+    current = client.get(feed_base + "/current")
+    assert current.status_code == 200
+    data = current.json()
+    assert data["editor_code"] == one["editor_code"] and data["journal_slug"] == one["slug"]
+    assert data["issue"]["title"] == "Latest issue"
+    assert [article["title"] for article in data["issue"]["articles"]] == ["Published article", "Unsafe link article"]
+    assert data["issue"]["articles"][0]["article_url"] == "https://example.com/article"
+    assert data["issue"]["articles"][1]["article_url"] is None
+    assert "Hidden draft article" not in current.text and "Other journal article" not in current.text
+    assert payload["email"] not in current.text
+    archives = client.get(feed_base + "/archives?limit=1&offset=0").json()
+    assert archives["total"] == 2 and len(archives["items"]) == 1
+    assert archives["items"][0]["title"] == "Older issue"
+    assert archives["items"][0]["articles"][0]["title"] == "Archived article"
+    assert client.get(feed_base + "/archives?limit=1&offset=1").json()["items"][0]["title"] == "Oldest issue"
+    assert client.get(feed_base + "/archives?limit=0").status_code == 422
+    assert client.get('/api/v1/public/journals/invalid/first-journal/current').status_code == 422
+    assert client.get(f'/api/v1/public/journals/{other_journal.json()["editor_code"]}/{two["slug"]}/current').status_code == 404
+    assert client.get(f'/api/v1/public/journals/{two["editor_code"]}/{two["slug"]}/current').json()["issue"]["title"] == "Same editor different journal"
+    with SessionLocal() as db:
+        db.get(EditorJournal, one["id"]).status = "NotPublished"
+        db.commit()
+    assert client.get(feed_base + "/current").status_code == 404
+    assert client.get(feed_base + "/archives").status_code == 404

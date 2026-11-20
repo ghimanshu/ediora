@@ -159,3 +159,37 @@ The frontend uses internal `/api/editor/journal/status?journal_id={id}`, display
 `GET /api/v1/admin/journal-editors` returns editor ID/name/email choices for editors who have journals. `GET /api/v1/admin/editor-journals/{id}` returns the copied template and saved journal pages with owner identification for read-only inspection. Missing IDs return 404. All three endpoints require an active super-admin session; unauthenticated callers receive 401 and editors receive 403. No mutation methods are provided. Inspection performs no content updates and does not grant access to owner-only editor mutation endpoints.
 
 Frontend: Admin → Editor templates (`/admin/editor-journals`). Open journal launches `/admin/editor-journals/{id}` in a new tab with a view-only template and sandboxed website/page preview. All requests use internal `/api/admin/*` routes; those inspection paths allow GET only. No database migration is needed.
+
+
+## Admin website ZIP export
+
+`GET /api/v1/admin/editor-journals/{id}/export` requires an active super-admin session and a journal whose status is `Published`. Missing IDs return 404; Draft/NotPublished journals return 409. It returns `application/zip` with an attachment filename and no-store headers. The frontend uses internal GET `/api/admin/editor-journals/{id}/export`, which streams binary data rather than attempting JSON parsing. Other users cannot export through either route.
+
+Admin → Editor → Journal provides **Download Website** next to Open journal. The ZIP contains one journal-named folder with `index.html`, the remaining HTML pages, `assets/styles.css`, and `README.txt`. The homepage is the saved home page or the first ordered page. Filenames are collision-safe, including a page whose slug is index. Menus preserve saved page order, link to relative HTML files, and include Current/Archives once. Existing Current/Archives content is used; missing pages get empty states. Known internal links in page content are rewritten to exported HTML filenames. External references remain external.
+
+Exports use validated template layout/colors and sanitized private page copies. No scripts, Next.js assets, API calls, account credentials, or admin originals are bundled. Supported page HTML excludes images/embeds/forms, so no external asset downloading is performed. Open index.html after extracting the entire folder, or upload the folder contents to a static hosting document root. This is a snapshot; subsequent editor changes need a new download. Generation has a 64 MB uncompressed HTML limit and does not modify journal data. No migration or new package is required.
+
+
+## Live Current and Archives in exported websites
+
+Migration `0010` adds `journal_issues` and `journal_articles`. An issue belongs to exactly one editor journal; articles belong to issues. Issues store title, volume, number, publication flag and date. Articles store title, author names (JSON list), plain-text abstract, optional HTTP(S) article URL, ordering position and publication flag. These read APIs do not add an issue/article management UI or write endpoints. Empty stores return empty feeds rather than fabricated content.
+
+Backend GET endpoints:
+
+- `/api/v1/public/journals/{editor_code}/{journal_slug}/current`
+- `/api/v1/public/journals/{editor_code}/{journal_slug}/archives?offset=0&limit=10`
+
+Both require the exact editor-code/journal-slug pair to resolve to a Published journal owned by an active, verified editor. The code is a public identifier, not a login credential. All returned records are scoped to the resolved journal. Draft/future issues and unpublished articles are omitted. Current is the latest published, dated issue (publication date descending, ID descending for ties). Archives excludes that issue and supports pagination (limit 1–100). Unsafe article URL schemes are returned as null.
+
+Current response: `{editor_code, journal_slug, issue: {id, title, volume, number, published_at, articles: [{id, title, authors, abstract, article_url}]} | null}`. Archives response: `{editor_code, journal_slug, items: [issue], total, offset, limit}`. Unknown/inactive/non-Published journals return 404. Validation errors return 422. No owner email, account data or credentials are exposed.
+
+Frontend public GET endpoints, always forwarding to backend APIs:
+
+- `/api/journal/current?editor_code=ab12cd34&journal_slug=my-journal`
+- `/api/journal/archives?editor_code=ab12cd34&journal_slug=my-journal&offset=0&limit=10`
+
+Only these two read-only frontend feeds allow cross-origin access (`Access-Control-Allow-Origin: *`, no credentials). This supports both deployed static subdomains and extracted file:// pages. OPTIONS is supported. Other internal API authentication/origin rules are unchanged. Responses are no-store; backend credentials are never embedded in exports.
+
+New ZIP downloads contain `assets/journal-config.js` and `assets/journal-feed.js`. Current/Archives pages load the feeds via classic JavaScript; regular exported pages remain static. Config includes editor code, journal slug and api_origin derived from backend FRONTEND_URL. Set FRONTEND_URL to the actual frontend HTTPS origin before production export, or edit api_origin in the extracted config. Internet access and a running frontend/backend are required for live feeds. Rendered text uses textContent, article links permit only HTTP(S), and the script validates response journal identity. Archives has Previous/Next controls; failures provide Retry and a configuration/network message. Saved Current/Archives introductory HTML is retained above the live listing.
+
+Re-download existing ZIPs after deploying these changes. Apply migration 0010 using `alembic upgrade head` or the Docker API startup migration. Editor deletion cleans issue/article records before removing journal copies.

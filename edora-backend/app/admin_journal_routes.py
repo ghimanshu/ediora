@@ -1,4 +1,7 @@
 from datetime import date, datetime, time, timedelta, timezone
+from fastapi.responses import Response
+from app.website_export import build_website_zip
+from app.config import settings
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func, case
@@ -81,3 +84,22 @@ def view_editor_journal(journal_id: int, admin: Editor = Depends(current_admin),
     # Admin inspection deliberately works for inactive/unverified editor accounts too.
     return {**journal_output(db, journal), "editor_id": editor.id,
             "editor_name": f"{editor.first_name} {editor.last_name}", "editor_email": editor.email}
+
+
+@router.get("/editor-journals/{journal_id}/export")
+def export_editor_journal(journal_id: int, admin: Editor = Depends(current_admin), db: DBSession = Depends(get_db)):
+    journal = db.scalar(select(EditorJournal).join(Editor, Editor.id == EditorJournal.editor_id).where(
+        EditorJournal.id == journal_id, Editor.role == "editor").with_for_update(of=EditorJournal))
+    if not journal:
+        raise HTTPException(404, "Journal not found")
+    if journal.status != "Published":
+        raise HTTPException(409, "Only Published journals can be exported")
+    pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id).order_by(EditorJournalPage.position)).all()
+    owner = db.get(Editor, journal.editor_id)
+    try:
+        data = build_website_zip(journal, pages, owner.public_code, settings.frontend_url)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return Response(data, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{journal.slug}-website.zip"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})

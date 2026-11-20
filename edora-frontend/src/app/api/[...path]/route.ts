@@ -13,6 +13,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const path = (await context.params).path.join("/");
   const methods = /^admin\/users(?:\/[1-9]\d*)?$/.test(path)
     ? (path === "admin/users" ? ["GET"] : ["PATCH", "DELETE"])
+    : /^admin\/editor-journals\/[1-9]\d*\/export$/.test(path) ? ["GET"]
     : path === "admin/journal-editors" || /^admin\/editor-journals(?:\/[1-9]\d*)?$/.test(path) ? ["GET"]
     : /^admin\/templates(?:\/[1-9]\d*)?$/.test(path)
       ? (path === "admin/templates" ? ["GET", "POST"] : ["PATCH", "DELETE"])
@@ -43,6 +44,16 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     const upstream = await fetch(`${backend}/api/v1/${path}${request.nextUrl.search}`, {
       method: request.method, headers, body, cache: "no-store", signal: AbortSignal.timeout(20000),
     });
+    if (/^admin\/editor-journals\/[1-9]\d*\/export$/.test(path) && upstream.ok) {
+      if (!upstream.headers.get("content-type")?.startsWith("application/zip")) {
+        return NextResponse.json({ detail: "Invalid website export response" }, { status: 502 });
+      }
+      return new NextResponse(upstream.body, { status: upstream.status, headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": upstream.headers.get("content-disposition") ?? 'attachment; filename="journal-website.zip"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+      } });
+    }
     const data = upstream.status === 204 ? null : await upstream.json();
     let response: NextResponse;
     if (path === "auth/login" && upstream.ok) {
