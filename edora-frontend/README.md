@@ -140,3 +140,8 @@ The Journal menu opens `/dashboard/journal` with tiles for all of the editor's j
 ### Journal status
 
 Every journal starts as Draft. Tiles and the management banner display Draft, Published, or NotPublished. Open Journal Info, choose a status, and click Save status to update only the selected journal. Preview links remain available in all states. Backend migration 0009 adds the status column, backfills existing journals to Draft, and restricts allowed values.
+
+
+### Inspect editor templates as admin
+
+Admin → **Editor templates** lists editors' personal journal templates. Filter by editor and journal creation date (inclusive UTC dates), apply or clear filters, and navigate paginated results. **Open journal** opens a read-only inspection screen in a new tab. View the saved template, select pages, and inspect journal content without editing or changing its status. Inactive editor journals remain available to super admins. All inspection requests pass through GET-only internal admin APIs.

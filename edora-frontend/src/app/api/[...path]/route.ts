@@ -13,6 +13,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const path = (await context.params).path.join("/");
   const methods = /^admin\/users(?:\/[1-9]\d*)?$/.test(path)
     ? (path === "admin/users" ? ["GET"] : ["PATCH", "DELETE"])
+    : path === "admin/journal-editors" || /^admin\/editor-journals(?:\/[1-9]\d*)?$/.test(path) ? ["GET"]
     : /^admin\/templates(?:\/[1-9]\d*)?$/.test(path)
       ? (path === "admin/templates" ? ["GET", "POST"] : ["PATCH", "DELETE"])
       : /^admin\/pages(?:\/[1-9]\d*)?$/.test(path)

@@ -490,7 +490,7 @@ def test_journal_page_total_and_size_limits():
         JournalCreate(name="Journal", template_id=1, new_pages=large_pages)
 
 
-def test_multiple_journal_tiles_and_scoped_management(client, setup):
+def test_multiple_journal_tiles_and_scoped_management(client, setup, monkeypatch):
     first = {"Authorization": f"Bearer {authenticate(client, setup)}"}
     template_id = client.get("/api/v1/templates", headers=first).json()[0]["id"]
     body = {"name": "First Journal", "template_id": template_id, "new_pages": [{"title": "Home", "slug": "home", "content_html": "<p>Original content</p>"}]}
@@ -550,3 +550,53 @@ def test_multiple_journal_tiles_and_scoped_management(client, setup):
         assert client.get(two_path, headers=first).json()["status"] == "Draft"
     with SessionLocal() as db:
         assert db.get(EditorJournal, one["id"]).status == "Draft"
+
+    from app.config import settings
+    from app.seed_admin import seed_admin
+    monkeypatch.setattr(settings, "super_admin_email", "admin@example.com")
+    monkeypatch.setattr(settings, "super_admin_password", "admin-password-1234")
+    seed_admin()
+    admin_token = client.post("/api/v1/auth/login", json={"email": "admin@example.com", "password": "admin-password-1234"}).json()["access_token"]
+    admin = {"Authorization": f"Bearer {admin_token}"}
+    with SessionLocal() as db:
+        first_owner = db.scalar(select(Editor).where(Editor.email == payload["email"])).id
+        db.get(EditorJournal, one["id"]).created_at = datetime(2026, 11, 1, 23, 59, 59, tzinfo=timezone.utc)
+        db.get(EditorJournal, two["id"]).created_at = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+        db.get(EditorJournal, other_journal.json()["id"]).created_at = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+        db.commit()
+    admin_list = "/api/v1/admin/editor-journals"
+    assert client.get(admin_list).status_code == 401
+    assert client.get(admin_list, headers=first).status_code == 403
+    assert client.get("/api/v1/admin/journal-editors", headers=first).status_code == 403
+    result = client.get(admin_list, headers=admin).json()
+    assert result["total"] == 3 and len(result["items"]) == 3
+    assert next(item for item in result["items"] if item["id"] == one["id"])["preview_path"] == client.get(one_path, headers=first).json()["preview_path"]
+    assert next(item for item in result["items"] if item["id"] == two["id"])["preview_path"] == client.get(two_path, headers=first).json()["preview_path"]
+    assert all("template_layout" not in row and "pages" not in row for row in result["items"])
+    assert client.get(f"{admin_list}?editor_id={first_owner}", headers=admin).json()["total"] == 2
+    assert client.get(f"{admin_list}?date_from=2026-11-01&date_to=2026-11-01", headers=admin).json()["total"] == 1
+    combined = client.get(f"{admin_list}?editor_id={first_owner}&date_from=2026-11-02&date_to=2026-11-03", headers=admin).json()
+    assert combined["total"] == 1 and combined["items"][0]["id"] == two["id"]
+    page = client.get(f"{admin_list}?offset=1&limit=1", headers=admin).json()
+    assert page["total"] == 3 and len(page["items"]) == 1
+    assert client.get(f"{admin_list}?date_from=2026-11-03&date_to=2026-11-01", headers=admin).status_code == 422
+    assert client.get(f"{admin_list}?editor_id=-1", headers=admin).status_code == 422
+    assert len(client.get("/api/v1/admin/journal-editors", headers=admin).json()) == 2
+    detail_path = f'{admin_list}/{one["id"]}'
+    assert client.get(detail_path).status_code == 401
+    assert client.get(detail_path, headers=first).status_code == 403
+    before = client.get(one_path, headers=first).json()
+    detail = client.get(detail_path, headers=admin).json()
+    assert detail["editor_email"] == payload["email"]
+    assert detail["template_layout"] == before["template_layout"] and detail["pages"] == before["pages"]
+    assert client.patch(detail_path, headers=admin, json={"status": "Published"}).status_code == 405
+    assert client.delete(detail_path, headers=admin).status_code == 405
+    assert client.get(one_path, headers=first).json() == before
+    assert client.get(f"{admin_list}/999999", headers=admin).status_code == 404
+    with SessionLocal() as db:
+        owner = db.get(Editor, first_owner)
+        owner.is_active = False
+        owner.is_verified = False
+        db.commit()
+    assert client.get(detail_path, headers=admin).status_code == 200
+    assert client.get(f"{admin_list}?editor_id={first_owner}", headers=admin).json()["total"] == 2

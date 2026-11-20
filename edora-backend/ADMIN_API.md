@@ -150,3 +150,12 @@ Each journal has `status`, restricted to `Draft`, `Published`, or `NotPublished`
 `PATCH /api/v1/editor/journal/status?journal_id={id}` accepts only `{"status":"Published"}` (or either other allowed value) and returns the updated journal. Only the owning editor can change status; other owners receive 404 and unauthenticated callers receive 401. Invalid status values or unexpected fields return 422. The selected journal is locked and its updated_at timestamp is refreshed. Other journals are untouched.
 
 The frontend uses internal `/api/editor/journal/status?journal_id={id}`, displays badges on tiles and in the workspace, and offers a selector with Save status in Journal Info. Status tracks journal workflow; shareable preview access remains unchanged in every state. Apply with `alembic upgrade head` or rebuild/start the Docker API.
+
+
+## Admin read-only editor template inspection
+
+`GET /api/v1/admin/editor-journals` lists editor-owned journal template copies with journal name, editor name/email, template name, status, page count, created_at, and updated_at. Supports `editor_id`, inclusive `date_from` / `date_to` creation dates (UTC), `offset` (default 0), and `limit` (default 20, maximum 100). Returns `{items, total}`. Combined filters are applied together. Invalid/inverted date ranges return 422. Includes inactive/unverified editors so administrators can inspect every editor journal.
+
+`GET /api/v1/admin/journal-editors` returns editor ID/name/email choices for editors who have journals. `GET /api/v1/admin/editor-journals/{id}` returns the copied template and saved journal pages with owner identification for read-only inspection. Missing IDs return 404. All three endpoints require an active super-admin session; unauthenticated callers receive 401 and editors receive 403. No mutation methods are provided. Inspection performs no content updates and does not grant access to owner-only editor mutation endpoints.
+
+Frontend: Admin → Editor templates (`/admin/editor-journals`). Open journal launches `/admin/editor-journals/{id}` in a new tab with a view-only template and sandboxed website/page preview. All requests use internal `/api/admin/*` routes; those inspection paths allow GET only. No database migration is needed.

@@ -135,3 +135,17 @@ test("journal status updates preserve the selected journal ID", async () => {
   assert.ok(forwarded.url.endsWith("/api/v1/editor/journal/status?journal_id=7"));
   assert.deepEqual(forwarded.body, { status: "Published" });
 });
+
+
+test("admin editor-journal inspection forwards filters and rejects write methods", async () => {
+  const origin = process.env.APP_ORIGIN ?? "http://localhost:3000";
+  let url;
+  const handlers = loadModule("src/app/api/[...path]/route.ts", async (upstream) => { url = upstream; return Response.json({ items: [], total: 0 }); });
+  const response = await handlers.GET(new NextRequest(`${origin}/api/admin/editor-journals?editor_id=2&date_from=2026-11-01&date_to=2026-11-20&limit=20&offset=0`), context("admin/editor-journals"));
+  assert.equal(response.status, 200);
+  assert.ok(url.includes("editor_id=2&date_from=2026-11-01&date_to=2026-11-20"));
+  for (const method of ["PATCH", "DELETE", "POST"]) {
+    const blocked = await handlers[method](new NextRequest(`${origin}/api/admin/editor-journals/1`, { method, headers: { origin } }), context("admin/editor-journals/1"));
+    assert.equal(blocked.status, 405);
+  }
+});
