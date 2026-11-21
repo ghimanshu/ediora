@@ -2,8 +2,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 const items = [
-  { href: "/dashboard", title: "Profile", detail: "Manage your profile", icon: <><circle cx="12" cy="8" r="4" /><path d="M4 22v-2a8 8 0 0 1 16 0v2" /></> },
   { href: "/dashboard/journal", title: "Journal", detail: "Build your journal website", icon: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 9v12" /></> },
+  { href: "/dashboard/articles", title: "Articles", detail: "Headings, authors & PDFs", icon: <><path d="M14 2H6v20h14V8zM14 2v6h6M8 13h8M8 17h6" /></> },
+  { href: "/dashboard/volumes", title: "Volumes", detail: "Organize journal articles", icon: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 9v12" /></> },
 ];
 export default function EditorNavigation() {
   const path = usePathname();

@@ -10,6 +10,19 @@ class JournalStatusUpdate(BaseModel):
     status: JournalStatus
     model_config = ConfigDict(extra="forbid")
 
+class JournalInfo(BaseModel):
+    editor_in_chief: str = Field(default="", max_length=150)
+    frequency: str = Field(default="", max_length=150)
+    final_decision: str = Field(default="", max_length=150)
+    acceptance_rate: str = Field(default="", max_length=150)
+    plagiarism: str = Field(default="", max_length=150)
+    language: str = Field(default="", max_length=150)
+    review_process: str = Field(default="", max_length=150)
+    open_access: str = Field(default="", max_length=150)
+    copyright: str = Field(default="", max_length=150)
+    eissn: str = Field(default="", max_length=150)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
 class JournalCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     template_id: int = Field(gt=0)
@@ -20,7 +33,7 @@ class JournalCreate(BaseModel):
     @field_validator("page_ids")
     @classmethod
     def unique_pages(cls, values):
-        if any(value <= 0 for value in values) or len(set(values)) != len(values):
+        if any(isinstance(value, int) and value <= 0 for value in values) or len(set(values)) != len(values):
             raise ValueError("Choose distinct valid pages")
         return values
 
@@ -36,6 +49,8 @@ class JournalCreate(BaseModel):
         return self
 
 class JournalOutput(BaseModel):
+    menu_order: list[str] = Field(default_factory=list)
+    journal_info: JournalInfo = Field(default_factory=JournalInfo)
     status: JournalStatus
     editor_code: str
     slug: str
@@ -56,6 +71,9 @@ class PublicJournalPage(BaseModel):
     content_html: str
 
 class PublicJournal(BaseModel):
+    menu_order: list[str] = Field(default_factory=list)
+    editor_email: str
+    journal_info: JournalInfo = Field(default_factory=JournalInfo)
     name: str
     slug: str
     editor_code: str
@@ -64,13 +82,13 @@ class PublicJournal(BaseModel):
 
 
 class JournalPageOrder(BaseModel):
-    page_ids: list[StrictInt] = Field(min_length=1, max_length=100)
+    page_ids: list[StrictInt | Literal["current", "archives", "submission"]] = Field(min_length=1, max_length=103)
     model_config = ConfigDict(extra="forbid")
 
     @field_validator("page_ids")
     @classmethod
     def unique_positive_ids(cls, values):
-        if any(value <= 0 for value in values) or len(values) != len(set(values)):
+        if any(isinstance(value, int) and value <= 0 for value in values) or len(values) != len(set(values)):
             raise ValueError("Include each journal page exactly once")
         return values
 

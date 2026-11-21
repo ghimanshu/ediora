@@ -159,3 +159,19 @@ Download a fresh website ZIP after deploying this feature. Its Current and Archi
 `assets/journal-config.js` contains the frontend API origin and journal identifiers. Production exports use backend FRONTEND_URL, which must be your frontend HTTPS origin; adjust api_origin in the extracted config when needed. These two pages require an internet connection and the web application to be running, including when opened from file://. Other pages retain offline navigation and styling. Cross-origin read access is enabled only on the two public feed routes; no login tokens are included.
 
 Current shows the latest published issue; Archives lists earlier issues with pagination. Only published articles are shown. Empty feeds display clear empty states; failures provide Retry. Backend migration 0010 supplies issue/article storage, but issue/article entry and publishing screens are not implemented by this change.
+
+
+### Articles and Volumes
+
+The editor sidebar includes **Articles** and **Volumes**. Both list all of the editor’s records by default, with optional journal and creation-date filters. In Articles, create/edit a heading, one author name per line, an optional abstract, and a PDF up to 10 MB. Editing can retain or replace the PDF. Owner PDF downloads remain private until publication conditions are met.
+
+In Volumes, create a volume and select multiple available articles. Each article belongs to one volume at most. Remove it from its old volume before moving it; deleting a volume retains its articles as unassigned. Deleting an article removes its PDF too. Article selection order controls order within the volume.
+
+Published volumes and published articles appear in Current/Archives when their journal is also Published and their publication date is not in the future. Uploaded PDFs are linked through the public frontend PDF API, which verifies journal/editor scope. PDFs are persisted in the backend database; migration 0011 preserves existing article metadata and backfills journal ownership.
+
+
+### Filter Articles and Volumes
+
+Both screens default to **All journals**. Use **Filter by journal**, **Created from**, and **Created to** (inclusive UTC dates), then **Apply filters**. **Clear** restores all records. Lists display the journal and creation date for each row.
+
+Choose exactly one journal when creating an article or volume. That journal is fixed on edits. Volume article selection includes only articles from its own journal. Backend migration 0012 adds creation dates to volumes; existing volume dates use migration time because historical creation dates were not stored.

@@ -193,3 +193,67 @@ Only these two read-only frontend feeds allow cross-origin access (`Access-Contr
 New ZIP downloads contain `assets/journal-config.js` and `assets/journal-feed.js`. Current/Archives pages load the feeds via classic JavaScript; regular exported pages remain static. Config includes editor code, journal slug and api_origin derived from backend FRONTEND_URL. Set FRONTEND_URL to the actual frontend HTTPS origin before production export, or edit api_origin in the extracted config. Internet access and a running frontend/backend are required for live feeds. Rendered text uses textContent, article links permit only HTTP(S), and the script validates response journal identity. Archives has Previous/Next controls; failures provide Retry and a configuration/network message. Saved Current/Archives introductory HTML is retained above the live listing.
 
 Re-download existing ZIPs after deploying these changes. Apply migration 0010 using `alembic upgrade head` or the Docker API startup migration. Editor deletion cleans issue/article records before removing journal copies.
+
+
+## Editor Articles and Volumes (migration 0011)
+
+Editors select a journal at `/dashboard/articles` or `/dashboard/volumes`. Volumes reuse `journal_issues` for compatibility with Current/Archives feeds. Articles now store a direct owning journal, an optional volume (`issue_id`), and a persisted PDF. Migration 0011 backfills article ownership from existing issues without deleting old content. It adds PDF bytes/size metadata, timestamps and a composite foreign key preventing cross-journal volume assignments. A single nullable issue_id permits zero or one volume per article. PDFs are stored as database binary data (deferred from metadata/list reads), so PostgreSQL backups include PDFs and container rebuilds do not lose them. PDF backups and database capacity must be planned accordingly.
+
+All management endpoints require an active verified editor, plus `journal_id` in the query. Every operation verifies ownership and serializes journal mutations with a row lock.
+
+| Backend endpoint | Methods | Purpose |
+| --- | --- | --- |
+| /api/v1/editor/articles?journal_id=ID | GET, POST | List metadata / create article |
+| /api/v1/editor/articles/{id}?journal_id=ID | PATCH, DELETE | Edit or remove article and PDF |
+| /api/v1/editor/articles/{id}/pdf?journal_id=ID | GET | Owner PDF download |
+| /api/v1/editor/volumes?journal_id=ID | GET, POST | List / create volumes |
+| /api/v1/editor/volumes/{id}?journal_id=ID | PATCH, DELETE | Edit volume/membership or delete volume |
+
+Article body: `title`, `authors` (1–50 names, 1–120 characters each), optional `abstract`, `is_published`, and `pdf_base64`. Creation requires a PDF; editing can omit pdf_base64 to retain the old one. Maximum decoded PDF size is 10 MB; base64 decoding, PDF header and EOF markers are checked. This is file-format checking, not a malware scan. The internal JSON proxy permits article bodies up to 15,000,000 bytes. No base64 is returned in article metadata. Published articles require a PDF; legacy articles remain preserved but should be supplied PDFs when edited.
+
+Volume body: `title`, `volume`, optional `number`, `is_published`, optional timezone-aware `published_at`, and `article_ids` in display order. Publishing without a date uses the existing publication date or current time. Selecting articles already assigned elsewhere returns 409; foreign journal article IDs return 404. To move an article, remove it from its old volume first. Removing a volume unassigns its articles while retaining PDFs. Deleting an article removes its membership and PDF.
+
+Public PDF route: `/api/v1/public/journals/{editor_code}/{journal_slug}/articles/{id}/pdf`, reached through frontend `/api/journal/article-pdf?editor_code=CODE&journal_slug=SLUG&article_id=ID`. It requires a Published journal, an active verified owner, a published dated volume and a published article in that journal. Draft/unassigned articles do not have public PDF access. Current/Archives article_url values use this frontend PDF API when an uploaded PDF exists. Browser PDF responses are attachments with no-store and nosniff headers.
+
+All browser requests use internal APIs; management PDFs and public PDFs are forwarded as binary responses. Apply migration 0011 before deploying the new APIs. Downgrade refuses when unassigned articles exist; downgrading removes the newly added PDF columns, so back up the database first.
+
+
+## All-journal article/volume lists and creation-date filters
+
+`GET /api/v1/editor/articles` and `GET /api/v1/editor/volumes` now default to all records owned by the signed-in editor, across their journals. Both accept optional `journal_id`, `date_from`, and `date_to`; dates are inclusive UTC creation dates, and inverted ranges return 422. An explicitly selected foreign journal returns 404. Ownership is always enforced by joining the journal to the authenticated editor. Responses now include `journal_name` and `created_at`.
+
+Every article and volume still belongs to exactly one journal. Creation requires journal_id; edits, PDF downloads and deletion continue to use each record's existing journal ID. Journal ownership cannot be changed through edit payloads. Volume membership remains restricted to articles in that same journal.
+
+Frontend pages now have All journals/date filters rather than a mandatory journal switcher. Journal selection appears inside new article/volume forms only, and is fixed when editing an existing record. Filters change displayed rows without changing record ownership. Clear restores the all-journal view.
+
+Migration `0012` adds volume creation timestamps for date filtering. Existing volumes are backfilled with migration time because their original creation timestamps were not previously recorded; article creation timestamps are preserved. Apply via `alembic upgrade head` or Docker startup. No other schema/relationship changes are made.
+
+### Archive volumes
+
+Editor volume POST/PATCH bodies and responses include `is_archived` (boolean, default false). Existing ownership and journal scoping apply. Archiving retains article membership and publication state. Current selects the latest published, non-archived volume whose publication time has arrived. Archives includes only explicitly archived volumes; draft and future-dated volumes remain hidden. Public PDFs remain accessible for eligible archived articles. No new endpoint is required. Apply migration `0013` with `alembic upgrade head`.
+
+Volume status: send `status` as exactly `Published`, `UnPublished`, or `Archived` in volume POST/PATCH. Responses include this exclusive status. It takes precedence over legacy flags: Published maps to published/non-archived, UnPublished to neither, Archived to published/archived. Legacy boolean requests remain compatible and cannot persist an unpublished archived state. Article publication remains independent; only published articles appear publicly.
+
+### Journal editorial information
+
+`PATCH /api/v1/editor/journal/info?journal_id=ID` saves that journal's `journal_info`. Frontend calls `/api/editor/journal/info` first. Fields: `editor_in_chief`, `frequency`, `final_decision`, `acceptance_rate`, `plagiarism`, `language`, `review_process`, `open_access`, `copyright`, `eissn`. Each is optional plain text up to 150 characters; omitted fields become empty strings. Returns the updated journal including `journal_info`. Restricted to the owning editor. Migration `0014` adds `editor_journals.journal_info` JSON with an empty default; existing content is preserved.
+
+### Delete a journal
+
+`DELETE /api/v1/editor/journal?journal_id=ID` (frontend `/api/editor/journal?journal_id=ID`) is restricted to its owning editor and returns 204. Deletes journal articles/PDFs, volumes, copied pages, personal template and metadata atomically. Admin library templates/pages and other journals are preserved. No schema migration is needed.
+
+Template journal information panel: `layout.show_journal_info` defaults to true. Classic Journal and Sidebar Studio show a compact right-hand panel beside the page content. Public journal responses include `journal_info`; static ZIPs contain an escaped snapshot of the same values. Blank fields are omitted. Migration `0015` enables the panel on the two starter admin templates without changing their sections or colors. Existing personal layouts use the same default without changing their saved content.
+
+Journal website submissions: public journal data includes `editor_email` for the owner. The right-hand Submissions box links to a mail client addressed to this email, including in fresh ZIP exports. Migration `0016` removes eelet.org/eelet.org.uk hyperlinks and plain URLs from master templates/pages, journal copies and article URLs/abstracts while retaining anchor text. Downgrade does not reintroduce external links.
+
+Admin template editing uses separate Settings/Header/Menu/Content/Footer tabs. Template layouts now accept optional `show_submissions` (boolean or null). A boolean controls the submission panel independently of `show_journal_info`; null/missing retains the prior behavior of following the information-panel setting. Both flags are copied into new journals and respected by previews and ZIP exports. No migration is required for these JSON layout fields.
+
+Journal menu order: migration `0017` adds `editor_journals.menu_order` JSON. PATCH `/editor/journal/pages/order?journal_id=ID` accepts `page_ids` containing each saved page ID plus missing built-in tokens (`current`, `archives`, `submission`) exactly once. Existing numeric-only requests remain compatible. Private/public journal responses include ordered menu slugs; live and exported navigation follow this order. Built-in pages remain read-only. Submission is generated in exports if no submission(s) page was selected.
+
+### Visitor manuscript submissions
+
+Migration `0018` stores single-use, journal-scoped CAPTCHA challenges and private manuscript submissions. For Published journals owned by active verified editors: GET `/api/v1/public/journals/{code}/{slug}/submission/captcha` returns `captcha_id`, an SVG data URL and a ten-minute lifetime. POST `/submission` accepts `full_name`, `email`, `title`, `authors`, `abstract`, `pdf_base64` (PDF up to 10 MB), `captcha_id` and `captcha_answer`. A valid code is single-use; wrong answers consume the code. Limit five submissions per email/journal/hour and 100 live challenges/journal/ten minutes. Returns 201 with a reference. Submitted manuscripts are saved separately from published articles and emailed with a PDF attachment and visitor Reply-To. SMTP failure leaves the saved record with `notification_sent=false` and returns a pending notification message. Frontend and static exports call only `/api/journal/submission` and `/api/journal/submission/captcha`, which proxy to these backend endpoints without session credentials. CORS supports hosted and extracted static sites. Configure SMTP for real editor delivery; local Mailpit captures test emails.
+
+### Submitted articles (current storage)
+
+Migration `0019` backfills existing manuscripts into `journal_articles` and preserves their PDFs, journal ownership, submitter details and notification state. New visitor submissions write only to `journal_articles` with `status=Submitted`, `is_published=false` and no volume. Legacy submission rows remain untouched as a migration backup. Editor article responses include `status` (`Submitted`, `Published`, `UnPublished`), `submitter_name`, `submitter_email`, and `notification_sent`. Article POST/PATCH accepts `status`; it determines `is_published`. Existing boolean clients remain compatible. Manage Articles shows received manuscripts and their submitter details using the existing owner-protected list/edit/PDF APIs; no separate inbox is used. Submitted manuscripts are excluded from public feeds and public PDF endpoints until published.

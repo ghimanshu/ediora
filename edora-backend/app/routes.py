@@ -167,7 +167,7 @@ def delete_user(user_id: int, admin: Editor = Depends(current_admin), db: DBSess
     editor = managed_user(db, user_id)
     journal_ids = select(EditorJournal.id).where(EditorJournal.editor_id == user_id)
     issue_ids = select(JournalIssue.id).where(JournalIssue.journal_id.in_(journal_ids))
-    db.execute(delete(JournalArticle).where(JournalArticle.issue_id.in_(issue_ids)))
+    db.execute(delete(JournalArticle).where(JournalArticle.journal_id.in_(journal_ids)))
     db.execute(delete(JournalIssue).where(JournalIssue.journal_id.in_(journal_ids)))
     db.execute(delete(EditorJournalPage).where(EditorJournalPage.journal_id.in_(journal_ids)))
     db.execute(delete(EditorJournal).where(EditorJournal.editor_id == user_id))

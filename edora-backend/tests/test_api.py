@@ -14,7 +14,7 @@ from alembic.config import Config
 from alembic import command
 from app.main import app
 from app.database import SessionLocal
-from app.models import Editor, Verification, Session, Contact, WebsiteTemplateSelection, WebPage, EditorJournal, EditorJournalPage, JournalIssue, JournalArticle
+from app.models import Editor, Verification, Session, Contact, WebsiteTemplateSelection, WebPage, EditorJournal, EditorJournalPage, JournalIssue, JournalArticle, ManuscriptSubmission, SubmissionCaptcha
 from app import routes
 from app.security import digest
 
@@ -22,7 +22,7 @@ from app.security import digest
 def setup(monkeypatch):
     command.upgrade(Config('alembic.ini'), 'head')
     with SessionLocal() as db:
-        for model in (JournalArticle, JournalIssue, EditorJournalPage, EditorJournal, WebPage, WebsiteTemplateSelection, Session, Verification, Contact, Editor):
+        for model in (SubmissionCaptcha, ManuscriptSubmission, JournalArticle, JournalIssue, EditorJournalPage, EditorJournal, WebPage, WebsiteTemplateSelection, Session, Verification, Contact, Editor):
             db.execute(delete(model))
         db.commit()
     messages = []
@@ -454,9 +454,9 @@ def test_journal_with_only_new_pages_and_invalid_drafts(client, setup):
     assert public["name"] == "Custom Journal"
     assert public["template_layout"] == journal["template_layout"]
     assert public["pages"][0]["content_html"] == "<h2>My research</h2><p>Private article</p>"
-    assert set(public) == {"name", "slug", "editor_code", "template_layout", "pages"}
+    assert set(public) == {"name", "slug", "editor_code", "template_layout", "pages", "journal_info", "editor_email", "menu_order"}
     assert set(public["pages"][0]) == {"title", "slug", "content_html"}
-    assert payload["email"] not in public_response.text
+    assert public["editor_email"] == payload["email"]
     assert client.get(f'/api/v1/public/journals/{journal["editor_code"]}/wrong-journal').status_code == 404
     assert client.get('/api/v1/public/journals/00000000/custom-journal').status_code == 404
     assert client.get('/api/v1/public/journals/invalid/custom-journal').status_code == 422
@@ -622,7 +622,7 @@ def test_multiple_journal_tiles_and_scoped_management(client, setup, monkeypatch
     with ZipFile(BytesIO(exported.content)) as archive:
         assert "first-journal/index.html" in archive.namelist()
         assert "first-journal/assets/styles.css" in archive.namelist()
-        assert payload["email"].encode() not in archive.read("first-journal/index.html")
+        assert ("mailto:" + payload["email"]).encode() in archive.read("first-journal/index.html")
     with SessionLocal() as db:
         assert db.get(EditorJournal, one["id"]).updated_at == updated_before_export
 
@@ -640,8 +640,8 @@ def test_multiple_journal_tiles_and_scoped_management(client, setup, monkeypatch
     now = datetime.now(timezone.utc)
     with SessionLocal() as db:
         latest = JournalIssue(journal_id=one["id"], title="Latest issue", volume="1", number="3", is_published=True, published_at=now - timedelta(days=1))
-        old = JournalIssue(journal_id=one["id"], title="Older issue", is_published=True, published_at=now - timedelta(days=7))
-        oldest = JournalIssue(journal_id=one["id"], title="Oldest issue", is_published=True, published_at=now - timedelta(days=14))
+        old = JournalIssue(journal_id=one["id"], title="Older issue", is_published=True, is_archived=True, published_at=now - timedelta(days=7))
+        oldest = JournalIssue(journal_id=one["id"], title="Oldest issue", is_published=True, is_archived=True, published_at=now - timedelta(days=14))
         future = JournalIssue(journal_id=one["id"], title="Future issue", is_published=True, published_at=now + timedelta(days=1))
         draft = JournalIssue(journal_id=one["id"], title="Draft issue", is_published=False, published_at=now)
         other_same = JournalIssue(journal_id=two["id"], title="Same editor different journal", is_published=True, published_at=now)
@@ -649,11 +649,11 @@ def test_multiple_journal_tiles_and_scoped_management(client, setup, monkeypatch
         db.add_all([latest, old, oldest, future, draft, other_same, other_owner])
         db.flush()
         db.add_all([
-            JournalArticle(issue_id=latest.id, title="Published article", authors=["Author One"], abstract="Research abstract", article_url="https://example.com/article", is_published=True),
-            JournalArticle(issue_id=latest.id, title="Hidden draft article", is_published=False),
-            JournalArticle(issue_id=latest.id, title="Unsafe link article", article_url="javascript:bad()", is_published=True),
-            JournalArticle(issue_id=old.id, title="Archived article", is_published=True),
-            JournalArticle(issue_id=other_same.id, title="Other journal article", is_published=True)])
+            JournalArticle(journal_id=one["id"], issue_id=latest.id, title="Published article", authors=["Author One"], abstract="Research abstract", article_url="https://example.com/article", is_published=True),
+            JournalArticle(journal_id=one["id"], issue_id=latest.id, title="Hidden draft article", is_published=False),
+            JournalArticle(journal_id=one["id"], issue_id=latest.id, title="Unsafe link article", article_url="javascript:bad()", is_published=True),
+            JournalArticle(journal_id=one["id"], issue_id=old.id, title="Archived article", is_published=True),
+            JournalArticle(journal_id=two["id"], issue_id=other_same.id, title="Other journal article", is_published=True)])
         db.commit()
     current = client.get(feed_base + "/current")
     assert current.status_code == 200
@@ -679,3 +679,255 @@ def test_multiple_journal_tiles_and_scoped_management(client, setup, monkeypatch
         db.commit()
     assert client.get(feed_base + "/current").status_code == 404
     assert client.get(feed_base + "/archives").status_code == 404
+
+
+def test_editor_article_pdf_and_single_volume_management(client, setup, monkeypatch):
+    import base64
+    from app.config import settings
+    from app.seed_admin import seed_admin
+    headers = {"Authorization": f"Bearer {authenticate(client, setup)}"}
+    template_id = client.get("/api/v1/templates", headers=headers).json()[0]["id"]
+    journal_body = {"name": "Article Management", "template_id": template_id, "new_pages": [{"title": "Home", "slug": "home", "content_html": "<p>Home</p>"}]}
+    journal = client.post("/api/v1/editor/journal", headers=headers, json=journal_body).json()
+    second = client.post("/api/v1/editor/journal", headers=headers, json={**journal_body, "name": "Other Journal"}).json()
+    suffix = f'?journal_id={journal["id"]}'
+    order_url = "/api/v1/editor/journal/pages/order" + suffix
+    selected_page = journal["pages"][0]["id"]
+    combined_order = ["submission", "archives", selected_page, "current"]
+    reordered = client.patch(order_url, headers=headers, json={"page_ids": combined_order})
+    assert reordered.status_code == 200
+    assert reordered.json()["menu_order"] == ["submission", "archives", "home", "current"]
+    public_order = client.get(f'/api/v1/public/journals/{journal["editor_code"]}/{journal["slug"]}').json()
+    assert public_order["menu_order"] == ["submission", "archives", "home", "current"]
+    assert client.patch(order_url, headers=headers, json={"page_ids": [selected_page, "current"]}).status_code == 409
+    assert client.get(f'/api/v1/editor/journal?journal_id={second["id"]}', headers=headers).json()["menu_order"] == ["home", "current", "archives", "submission"]
+    info_url = "/api/v1/editor/journal/info" + suffix
+    info = {"editor_in_chief": "Narjess ALOUI", "frequency": "Four iss./ year", "final_decision": "75 days", "acceptance_rate": "15%", "plagiarism": "<10%", "language": "English", "review_process": "Single-blind", "open_access": "Yes", "copyright": "CC-BY 4.0", "eissn": "2323-5233"}
+    assert client.patch(info_url, json=info).status_code == 401
+    saved = client.patch(info_url, headers=headers, json=info)
+    assert saved.status_code == 200 and saved.json()["journal_info"] == info
+    public_details = client.get(f'/api/v1/public/journals/{journal["editor_code"]}/{journal["slug"]}').json()
+    assert public_details["journal_info"] == info
+    assert public_details["template_layout"]["show_journal_info"] is True
+    assert client.get("/api/v1/editor/journal" + suffix, headers=headers).json()["journal_info"] == info
+    assert client.get(f'/api/v1/editor/journal?journal_id={second["id"]}', headers=headers).json()["journal_info"]["editor_in_chief"] == ""
+    assert client.patch(info_url, headers=headers, json={"language": "x" * 151}).status_code == 422
+    assert client.patch(info_url, headers=headers, json={"unknown": "value"}).status_code == 422
+
+    articles = "/api/v1/editor/articles"
+    volumes = "/api/v1/editor/volumes"
+    pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF"
+    data = {"title": "Research heading", "authors": ["Author One", "Author Two"], "abstract": "Abstract text", "is_published": True, "pdf_base64": base64.b64encode(pdf).decode()}
+    assert client.get(articles + suffix).status_code == 401
+    assert client.post(articles + suffix, headers=headers, json={k: v for k, v in data.items() if k != "pdf_base64"}).status_code == 422
+    assert client.post(articles + suffix, headers=headers, json={**data, "pdf_base64": "invalid"}).status_code == 422
+    assert client.post(articles + suffix, headers=headers, json={**data, "pdf_base64": base64.b64encode(b"not a PDF").decode()}).status_code == 422
+    assert client.post(articles + suffix, headers=headers, json={**data, "authors": [" "]}).status_code == 422
+    assert client.post(articles + suffix, headers=headers, json={**data, "editor_id": 99}).status_code == 422
+    first = client.post(articles + suffix, headers=headers, json=data)
+    assert first.status_code == 201
+    first = first.json()
+    assert first["authors"] == ["Author One", "Author Two"] and first["volume_id"] is None
+    assert first["has_pdf"] and first["pdf_size"] == len(pdf)
+    assert first["journal_name"] == "Article Management" and first["created_at"]
+    another_article = client.post(f'{articles}?journal_id={second["id"]}', headers=headers, json={**data, "title": "Other journal research"}).json()
+
+    assert "pdf_content" not in first
+    second_article = client.post(articles + suffix, headers=headers, json={**data, "title": "Another article", "is_published": False}).json()
+    assert client.get(f'{articles}/{first["id"]}/pdf{suffix}', headers=headers).content == pdf
+    viewed = client.get(f'{articles}/{first["id"]}/pdf{suffix}&inline=true', headers=headers)
+    assert viewed.status_code == 200 and viewed.content == pdf
+    assert viewed.headers["content-disposition"].startswith("inline;")
+    assert client.get(f'{articles}/{first["id"]}/pdf{suffix}', headers=headers).headers["content-disposition"].startswith("attachment;")
+    assert client.get(f'{articles}/{first["id"]}/pdf').status_code in (401, 422)
+    assert client.get(f'{articles}/{first["id"]}/pdf?journal_id={second["id"]}', headers=headers).status_code == 404
+    edited = {key: value for key, value in data.items() if key != "pdf_base64"}
+    edited["title"] = "Updated heading"
+    assert client.patch(f'{articles}/{first["id"]}{suffix}', headers=headers, json=edited).status_code == 200
+    assert client.get(f'{articles}/{first["id"]}/pdf{suffix}', headers=headers).content == pdf
+    volume_data = {"title": "Volume one", "volume": "1", "number": "1", "is_published": True, "article_ids": [first["id"], second_article["id"]]}
+    volume = client.post(volumes + suffix, headers=headers, json=volume_data)
+    assert volume.status_code == 201
+    volume = volume.json()
+    assert volume["article_ids"] == [first["id"], second_article["id"]]
+    another_volume = client.post(f'{volumes}?journal_id={second["id"]}', headers=headers, json={**volume_data, "title": "Other journal volume", "article_ids": [another_article["id"]]}).json()
+    with SessionLocal() as db:
+        db.get(JournalArticle, first["id"]).created_at = datetime(2026, 11, 1, 23, 59, 59, tzinfo=timezone.utc)
+        db.get(JournalArticle, second_article["id"]).created_at = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+        db.get(JournalArticle, another_article["id"]).created_at = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+        db.get(JournalIssue, volume["id"]).created_at = datetime(2026, 11, 1, 23, 59, 59, tzinfo=timezone.utc)
+        db.get(JournalIssue, another_volume["id"]).created_at = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+        db.commit()
+    assert len(client.get(articles, headers=headers).json()) == 3
+    assert len(client.get(volumes, headers=headers).json()) == 2
+    assert len(client.get(articles + suffix, headers=headers).json()) == 2
+    assert client.get(articles + "?date_from=2026-11-01&date_to=2026-11-01", headers=headers).json()[0]["id"] == first["id"]
+    filtered_articles = client.get(articles + suffix + "&date_from=2026-11-02&date_to=2026-11-03", headers=headers).json()
+    assert [item["id"] for item in filtered_articles] == [second_article["id"]]
+    assert [item["id"] for item in client.get(volumes + "?date_from=2026-11-01&date_to=2026-11-01", headers=headers).json()] == [volume["id"]]
+    assert client.get(volumes + suffix + "&date_from=2026-11-02&date_to=2026-11-03", headers=headers).json() == []
+    assert client.get(articles + "?date_from=2026-11-03&date_to=2026-11-01", headers=headers).status_code == 422
+    assert client.get(volumes + "?date_from=2026-11-03&date_to=2026-11-01", headers=headers).status_code == 422
+    assert client.get(articles + "?journal_id=-1", headers=headers).status_code == 422
+    assert client.patch(f'{volumes}/{volume["id"]}?journal_id={second["id"]}', headers=headers, json=volume_data).status_code == 404
+
+    assert client.post(volumes + suffix, headers=headers, json={**volume_data, "title": "Conflicting", "volume": "2"}).status_code == 409
+    assert len(client.get(volumes + suffix, headers=headers).json()) == 1
+    assert client.post(f'{volumes}?journal_id={second["id"]}', headers=headers, json=volume_data).status_code == 404
+    code, slug = journal["editor_code"], journal["slug"]
+    public_pdf = f'/api/v1/public/journals/{code}/{slug}/articles/{first["id"]}/pdf'
+    assert client.get(public_pdf).status_code == 404
+    client.patch(f'/api/v1/editor/journal/status?journal_id={journal["id"]}', headers=headers, json={"status": "Published"})
+    assert client.get(public_pdf).status_code == 200 and client.get(public_pdf).content == pdf
+    assert client.get(f'/api/v1/public/journals/{code}/{slug}/articles/{second_article["id"]}/pdf').status_code == 404
+    current = client.get(f'/api/v1/public/journals/{code}/{slug}/current').json()
+    assert current["issue"]["title"] == "Volume one"
+    assert len(current["issue"]["articles"]) == 1
+    assert "/api/journal/article-pdf?" in current["issue"]["articles"][0]["article_url"]
+    archived = client.patch(f'{volumes}/{volume["id"]}{suffix}', headers=headers, json={**volume_data, "is_archived": True})
+    assert archived.status_code == 200 and archived.json()["is_archived"] is True
+    assert client.get(f'/api/v1/public/journals/{code}/{slug}/current').json()["issue"] is None
+    archive_feed = client.get(f'/api/v1/public/journals/{code}/{slug}/archives').json()
+    assert archive_feed["items"][0]["id"] == volume["id"]
+    assert len(archive_feed["items"][0]["articles"]) == 1
+    assert client.get(public_pdf).status_code == 200
+    for status in ("UnPublished", "Published", "Archived"):
+        changed = client.patch(f'{volumes}/{volume["id"]}{suffix}', headers=headers, json={**volume_data, "status": status})
+        assert changed.status_code == 200 and changed.json()["status"] == status
+        assert changed.json()["is_published"] == (status != "UnPublished")
+        assert changed.json()["is_archived"] == (status == "Archived")
+        feed = client.get(f'/api/v1/public/journals/{code}/{slug}/current').json()
+        history = client.get(f'/api/v1/public/journals/{code}/{slug}/archives').json()
+        assert (feed["issue"] is not None) == (status == "Published")
+        assert bool(history["items"]) == (status == "Archived")
+        assert client.get(public_pdf).status_code == (404 if status == "UnPublished" else 200)
+    assert client.patch(f'{volumes}/{volume["id"]}{suffix}', headers=headers, json={**volume_data, "status": "Invalid"}).status_code == 422
+    # Remove an article, then assign it to another volume. Membership cannot overlap.
+    assert client.patch(f'{volumes}/{volume["id"]}{suffix}', headers=headers, json={**volume_data, "article_ids": [second_article["id"]]}).status_code == 200
+    another = client.post(volumes + suffix, headers=headers, json={**volume_data, "title": "Volume two", "volume": "2", "article_ids": [first["id"]]}).json()
+    assert client.patch(f'{volumes}/{volume["id"]}{suffix}', headers=headers, json=volume_data).status_code == 409
+    assert client.delete(f'{volumes}/{another["id"]}{suffix}', headers=headers).status_code == 204
+    listed = client.get(articles + suffix, headers=headers).json()
+    assert next(article for article in listed if article["id"] == first["id"])["volume_id"] is None
+    assert client.get(f'{articles}/{first["id"]}/pdf{suffix}', headers=headers).content == pdf
+    # Another editor cannot inspect or modify this journal's articles/volumes.
+    other_data = {**payload, "email": "publication-other@example.com"}
+    client.post("/api/v1/auth/register", json=other_data)
+    verification = re.search(r'token=([^\s]+)', setup[-1][2]).group(1)
+    client.post("/api/v1/auth/verify-email", json={"token": verification})
+    token = client.post("/api/v1/auth/login", json={"email": other_data["email"], "password": payload["password"]}).json()["access_token"]
+    other = {"Authorization": f"Bearer {token}"}
+    assert client.patch(info_url, headers=other, json=info).status_code == 404
+
+    assert client.get(articles + suffix, headers=other).status_code == 404
+    assert client.get(articles, headers=other).json() == []
+    assert client.get(volumes, headers=other).json() == []
+
+    assert client.post(volumes + suffix, headers=other, json=volume_data).status_code == 404
+    assert client.patch(f'{articles}/{first["id"]}{suffix}', headers=other, json=edited).status_code == 404
+    assert client.get(f'{articles}/{first["id"]}/pdf{suffix}', headers=other).status_code == 404
+    monkeypatch.setattr(settings, "super_admin_email", "admin@example.com")
+    monkeypatch.setattr(settings, "super_admin_password", "admin-password-1234")
+    seed_admin()
+    admin_token = client.post("/api/v1/auth/login", json={"email": "admin@example.com", "password": "admin-password-1234"}).json()["access_token"]
+    admin = {"Authorization": f"Bearer {admin_token}"}
+    assert client.post(articles + suffix, headers=admin, json=data).status_code == 403
+    assert client.delete(f'{articles}/{second_article["id"]}{suffix}', headers=headers).status_code == 204
+    assert client.get(volumes + suffix, headers=headers).json()[0]["article_ids"] == []
+    assert client.delete(f'{volumes}/{volume["id"]}{suffix}', headers=headers).status_code == 204
+    with SessionLocal() as db:
+        owner_id = db.scalar(select(Editor.id).where(Editor.email == payload["email"]))
+    delete_url = "/api/v1/editor/journal" + suffix
+    assert client.delete(delete_url).status_code == 401
+    assert client.delete(delete_url, headers=other).status_code == 404
+    assert client.delete(delete_url, headers=admin).status_code == 403
+    replacement = client.post(volumes + suffix, headers=headers, json={**volume_data, "article_ids": [first["id"]]})
+    assert replacement.status_code == 201
+    removed = client.delete(delete_url, headers=headers)
+    assert removed.status_code == 204 and not removed.content
+    assert client.delete(delete_url, headers=headers).status_code == 404
+    assert client.get(f'/api/v1/editor/journal?journal_id={second["id"]}', headers=headers).status_code == 200
+    assert client.get("/api/v1/templates", headers=headers).json()
+    with SessionLocal() as db:
+        from app.models import EditorJournalPage
+        assert db.get(EditorJournal, journal["id"]) is None
+        assert not db.scalars(select(JournalArticle).where(JournalArticle.journal_id == journal["id"])).all()
+        assert not db.scalars(select(JournalIssue).where(JournalIssue.journal_id == journal["id"])).all()
+        assert not db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal["id"])).all()
+    assert client.delete(f"/api/v1/admin/users/{owner_id}", headers=admin).status_code == 204
+
+def test_visitor_manuscript_submission_captcha_and_editor_delivery(client, setup, monkeypatch):
+    import base64
+    from app import submission_routes
+    from app.models import ManuscriptSubmission, SubmissionCaptcha
+    headers = {"Authorization": f"Bearer {authenticate(client, setup)}"}
+    template_id = client.get("/api/v1/templates", headers=headers).json()[0]["id"]
+    body = {"name": "Submission Journal", "template_id": template_id, "new_pages": [{"title": "Home", "slug": "home", "content_html": "<p>Home</p>"}]}
+    journal = client.post("/api/v1/editor/journal", headers=headers, json=body).json()
+    other = client.post("/api/v1/editor/journal", headers=headers, json={**body,"name":"Other Submission Journal"}).json()
+    base = f'/api/v1/public/journals/{journal["editor_code"]}/{journal["slug"]}/submission'
+    assert client.get(base + "/captcha").status_code == 404
+    for item in (journal,other):
+        client.patch(f'/api/v1/editor/journal/status?journal_id={item["id"]}',headers=headers,json={"status":"Published"})
+    def challenge():
+        response = client.get(base + "/captcha")
+        assert response.status_code == 200
+        data = response.json()
+        svg = base64.b64decode(data["image"].split(",",1)[1]).decode()
+        answer = "".join(re.findall(r">([A-Z0-9])</text>",svg))
+        assert len(answer) == 6 and "answer" not in data
+        return data["captcha_id"],answer
+    sent=[]
+    monkeypatch.setattr(submission_routes,"send_manuscript_email",lambda to,name,record: sent.append((to,name,record.title,record.pdf_content)))
+    pdf=b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n%%EOF"
+    token,answer=challenge()
+    payload_data={"full_name":"Visitor Name","email":"visitor@example.com","title":"New research","authors":"Visitor Name, Other Author","abstract":"An original research manuscript for consideration.","pdf_base64":base64.b64encode(pdf).decode(),"captcha_id":token,"captcha_answer":"WRONG"}
+    assert client.post(base,json=payload_data).status_code == 422
+    assert client.post(base,json={**payload_data,"captcha_answer":answer}).status_code == 422
+    token,answer=challenge()
+    payload_data.update(captcha_id=token,captcha_answer=answer)
+    other_base=f'/api/v1/public/journals/{other["editor_code"]}/{other["slug"]}/submission'
+    assert client.post(other_base,json=payload_data).status_code == 422
+    assert client.post(base,json={**payload_data,"pdf_base64":base64.b64encode(b"bad").decode()}).status_code == 422
+    response=client.post(base,json=payload_data)
+    assert response.status_code == 201
+    assert response.json()["reference"]
+    assert sent == [(payload["email"],journal["name"],"New research",pdf)]
+    assert client.post(base,json=payload_data).status_code == 422
+    with SessionLocal() as db:
+        saved=db.get(JournalArticle,response.json()["reference"])
+        assert saved.journal_id == journal["id"] and saved.notification_sent
+        assert saved.submitter_email == "visitor@example.com" and saved.pdf_content == pdf
+        assert saved.status == "Submitted" and not saved.is_published
+        assert saved.pdf_size == len(pdf) and saved.submitter_name == "Visitor Name"
+        assert not db.scalars(select(ManuscriptSubmission).where(ManuscriptSubmission.journal_id==journal["id"])).all()
+    listing=client.get("/api/v1/editor/articles",headers=headers).json()
+    assert len(listing)==1 and listing[0]["status"]=="Submitted"
+    assert listing[0]["submitter_email"]=="visitor@example.com"
+    article_id=response.json()["reference"]
+    pdf_url=f'/api/v1/editor/articles/{article_id}/pdf?journal_id={journal["id"]}&inline=true'
+    assert client.get(pdf_url).status_code==401
+    assert client.get(pdf_url,headers=headers).content==pdf
+    volume=client.post(f'/api/v1/editor/volumes?journal_id={journal["id"]}',headers=headers,json={"title":"Current volume","volume":"1","status":"Published","article_ids":[article_id]}).json()
+    feed_url=base.removesuffix("/submission")+"/current"
+    assert client.get(feed_url).json()["issue"]["articles"]==[]
+    article_data={"title":"New research","authors":["Visitor Name","Other Author"],"abstract":payload_data["abstract"],"status":"Published"}
+    changed=client.patch(f'/api/v1/editor/articles/{article_id}?journal_id={journal["id"]}',headers=headers,json=article_data)
+    assert changed.status_code==200 and changed.json()["status"]=="Published" and changed.json()["is_published"]
+    assert len(client.get(feed_url).json()["issue"]["articles"])==1
+    # A failed notification never discards the manuscript.
+    def fail_mail(*args):
+        raise OSError("SMTP unavailable")
+    monkeypatch.setattr(submission_routes,"send_manuscript_email",fail_mail)
+    token,answer=challenge()
+    pending=client.post(base,json={**payload_data,"captcha_id":token,"captcha_answer":answer})
+    assert pending.status_code == 201 and "pending" in pending.json()["message"]
+    with SessionLocal() as db:
+        assert not db.get(JournalArticle,pending.json()["reference"]).notification_sent
+    # Owner deletion also removes private visitor manuscripts.
+    assert client.delete(f'/api/v1/editor/journal?journal_id={journal["id"]}',headers=headers).status_code == 204
+    with SessionLocal() as db:
+        assert not db.scalars(select(ManuscriptSubmission).where(ManuscriptSubmission.journal_id==journal["id"])).all()
+
+    with SessionLocal() as db:
+        assert not db.scalars(select(JournalArticle).where(JournalArticle.journal_id==journal["id"])).all()

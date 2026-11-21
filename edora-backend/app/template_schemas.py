@@ -24,6 +24,8 @@ class TemplateSection(BaseModel):
         return self
 
 class TemplateLayout(BaseModel):
+    show_journal_info: bool = True
+    show_submissions: bool | None = None
     menu_position: Literal["top", "left", "right"]
     sections: list[TemplateSection] = Field(min_length=4, max_length=4)
     model_config = ConfigDict(extra="forbid")

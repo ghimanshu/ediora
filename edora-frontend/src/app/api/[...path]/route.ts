@@ -14,6 +14,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const methods = /^admin\/users(?:\/[1-9]\d*)?$/.test(path)
     ? (path === "admin/users" ? ["GET"] : ["PATCH", "DELETE"])
     : /^admin\/editor-journals\/[1-9]\d*\/export$/.test(path) ? ["GET"]
+    : /^editor\/articles\/[1-9]\d*\/pdf$/.test(path) ? ["GET"]
+    : /^editor\/(?:articles|volumes)(?:\/[1-9]\d*)?$/.test(path) ? (/^editor\/(articles|volumes)$/.test(path) ? ["GET", "POST"] : ["PATCH", "DELETE"])
     : path === "admin/journal-editors" || /^admin\/editor-journals(?:\/[1-9]\d*)?$/.test(path) ? ["GET"]
     : /^admin\/templates(?:\/[1-9]\d*)?$/.test(path)
       ? (path === "admin/templates" ? ["GET", "POST"] : ["PATCH", "DELETE"])
@@ -23,8 +25,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       : path === "editor/profile" ? ["PATCH"]
       : /^editor\/pages(?:\/[1-9]\d*)?$/.test(path) ? ["GET"]
       : path === "editor/journals" ? ["GET"]
-      : path === "editor/journal" ? ["GET", "POST"]
-      : path === "editor/journal/status" ? ["PATCH"]
+      : path === "editor/journal" ? ["GET", "POST", "DELETE"]
+      : (path === "editor/journal/status" || path === "editor/journal/info") ? ["PATCH"]
       : path === "editor/journal/pages" ? ["POST"]
       : path === "editor/journal/pages/order" ? ["PATCH"]
       : path === "editor/journal/template" || /^editor\/journal\/pages\/[1-9]\d*$/.test(path) ? ["PATCH"]
@@ -39,11 +41,18 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   if (session) headers.Authorization = `Bearer ${session}`;
   try {
     const body = request.method === "GET" ? undefined : await request.text();
-    const maxBodyBytes = path === "editor/journal" && request.method === "POST" ? 6500000 : /^(?:admin\/pages(?:\/[1-9]\d*)?|editor\/journal\/pages(?:\/[1-9]\d*)?)$/.test(path) ? 650000 : 20000;
+    const maxBodyBytes = /^editor\/articles(?:\/[1-9]\d*)?$/.test(path) ? 15000000 : path === "editor/journal" && request.method === "POST" ? 6500000 : /^(?:admin\/pages(?:\/[1-9]\d*)?|editor\/journal\/pages(?:\/[1-9]\d*)?)$/.test(path) ? 650000 : 20000;
     if (body && Buffer.byteLength(body, "utf8") > maxBodyBytes) return NextResponse.json({ detail: "Request too large" }, { status: 413 });
     const upstream = await fetch(`${backend}/api/v1/${path}${request.nextUrl.search}`, {
       method: request.method, headers, body, cache: "no-store", signal: AbortSignal.timeout(20000),
     });
+    if (/^editor\/articles\/[1-9]\d*\/pdf$/.test(path) && upstream.ok) {
+      if (!upstream.headers.get("content-type")?.startsWith("application/pdf")) return NextResponse.json({ detail: "Invalid PDF response" }, { status: 502 });
+      return new NextResponse(upstream.body, { status: upstream.status, headers: {
+        "Content-Type": "application/pdf", "Content-Disposition": upstream.headers.get("content-disposition") ?? 'attachment; filename="article.pdf"',
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+      } });
+    }
     if (/^admin\/editor-journals\/[1-9]\d*\/export$/.test(path) && upstream.ok) {
       if (!upstream.headers.get("content-type")?.startsWith("application/zip")) {
         return NextResponse.json({ detail: "Invalid website export response" }, { status: 502 });

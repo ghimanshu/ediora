@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import secrets
 import string
-from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, JSON, UniqueConstraint, CheckConstraint
+from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, JSON, UniqueConstraint, CheckConstraint, ForeignKeyConstraint, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -83,6 +83,8 @@ class EditorJournal(Base):
     name: Mapped[str] = mapped_column(String(150))
     slug: Mapped[str] = mapped_column(String(150))
     status: Mapped[str] = mapped_column(String(20), default="Draft", server_default="Draft")
+    menu_order: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    journal_info: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     template_name: Mapped[str] = mapped_column(String(100))
     template_description: Mapped[str] = mapped_column(String(500))
     template_layout: Mapped[dict] = mapped_column(JSON)
@@ -104,21 +106,60 @@ class EditorJournalPage(Base):
 
 class JournalIssue(Base):
     __tablename__ = "journal_issues"
+    __table_args__ = (UniqueConstraint("id", "journal_id", name="uq_issue_journal"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     journal_id: Mapped[int] = mapped_column(ForeignKey("editor_journals.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     title: Mapped[str] = mapped_column(String(200))
     volume: Mapped[str] = mapped_column(String(40), default="")
     number: Mapped[str] = mapped_column(String(40), default="")
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class JournalArticle(Base):
     __tablename__ = "journal_articles"
+    __table_args__ = (
+        ForeignKeyConstraint(["issue_id", "journal_id"], ["journal_issues.id", "journal_issues.journal_id"], name="fk_article_volume_journal"),
+        CheckConstraint("pdf_size >= 0 AND pdf_size <= 10485760", name="ck_article_pdf_size"),
+    )
+    status: Mapped[str] = mapped_column(String(20), default=lambda context: "Published" if context.get_current_parameters().get("is_published") else "UnPublished", server_default="UnPublished")
+    submitter_name: Mapped[str] = mapped_column(String(150), default="", server_default="")
+    submitter_email: Mapped[str] = mapped_column(String(254), default="", server_default="")
+    notification_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    source_submission_id: Mapped[int | None] = mapped_column(nullable=True, unique=True)
     id: Mapped[int] = mapped_column(primary_key=True)
-    issue_id: Mapped[int] = mapped_column(ForeignKey("journal_issues.id", ondelete="CASCADE"), index=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("editor_journals.id", ondelete="CASCADE"), index=True)
+    issue_id: Mapped[int | None] = mapped_column(nullable=True, index=True)
+    pdf_content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    pdf_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pdf_size: Mapped[int] = mapped_column(default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
     title: Mapped[str] = mapped_column(String(300))
     authors: Mapped[list] = mapped_column(JSON, default=list)
     abstract: Mapped[str] = mapped_column(Text, default="")
     article_url: Mapped[str] = mapped_column(String(2048), default="")
     position: Mapped[int] = mapped_column(default=0)
     is_published: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+class SubmissionCaptcha(Base):
+    __tablename__ = "submission_captchas"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("editor_journals.id", ondelete="CASCADE"), index=True)
+    answer_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+class ManuscriptSubmission(Base):
+    __tablename__ = "manuscript_submissions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("editor_journals.id", ondelete="CASCADE"), index=True)
+    full_name: Mapped[str] = mapped_column(String(150))
+    email: Mapped[str] = mapped_column(String(254))
+    title: Mapped[str] = mapped_column(String(300))
+    authors: Mapped[str] = mapped_column(String(2000))
+    abstract: Mapped[str] = mapped_column(Text)
+    pdf_content: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    notification_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

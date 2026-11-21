@@ -6,5 +6,6 @@ import Header from "@/components/Header";
 export default function PortalChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   if (/^\/[a-z0-9]{8}\/[a-z0-9]+(?:-[a-z0-9]+)*\/[^/]+\/?$/.test(pathname)) return <>{children}</>;
-  return <><Header /><main>{children}</main><footer><Link className="brand" href="/">edora</Link><p>Thoughtful publishing starts with thoughtful people.</p><small>© {new Date().getFullYear()} Edora · Editor portal</small></footer></>;
+  const authPage = ["/login", "/register", "/verify-email", "/resend-verification"].includes(pathname);
+  return <><Header /><main className={authPage ? "auth-main" : undefined}>{children}</main><footer><Link className="brand" href="/">edora</Link><p>Thoughtful publishing starts with thoughtful people.</p><small>© {new Date().getFullYear()} Edora · Editor portal</small></footer></>;
 }

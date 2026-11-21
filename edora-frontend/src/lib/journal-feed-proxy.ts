@@ -39,3 +39,21 @@ export function journalFeedProxy(kind: "current" | "archives") {
     }
   };
 }
+
+
+export async function articlePdfProxy(request: NextRequest) {
+  const query = request.nextUrl.searchParams;
+  const code = query.get("editor_code") ?? "";
+  const slug = query.get("journal_slug") ?? "";
+  const id = query.get("article_id") ?? "";
+  if (!/^[a-z0-9]{8}$/.test(code) || slug.length > 150 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || !/^[1-9]\d*$/.test(id)) {
+    return NextResponse.json({ detail: "Valid editor_code, journal_slug and article_id are required" }, { status: 422, headers: corsHeaders });
+  }
+  try {
+    const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
+    const response = await fetch(`${backend}/api/v1/public/journals/${code}/${slug}/articles/${id}/pdf`, { cache: "no-store", signal: AbortSignal.timeout(20000) });
+    if (!response.ok) return NextResponse.json(await response.json(), { status: response.status, headers: corsHeaders });
+    if (!response.headers.get("content-type")?.startsWith("application/pdf")) throw new Error("Invalid PDF response");
+    return new NextResponse(response.body, { headers: { ...corsHeaders, "Content-Type": "application/pdf", "Content-Disposition": response.headers.get("content-disposition") ?? 'attachment; filename="article.pdf"' } });
+  } catch { return NextResponse.json({ detail: "PDF is temporarily unavailable" }, { status: 502, headers: corsHeaders }); }
+}

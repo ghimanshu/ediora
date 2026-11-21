@@ -12,5 +12,5 @@ export default function VerifyEmail() {
     catch (e) { setMessage((e as Error).message); }
     finally { setBusy(false); }
   }
-  return <section className="form-panel"><span className="eyebrow">One final step</span><h1>Verify your email.</h1><p>Confirm your email address to activate your editor account.</p>{!done && <button disabled={busy} onClick={verify}>{busy ? "Verifying…" : "Verify my email"}</button>}{message && <p className="message" role="status">{message}</p>}<p><Link className="textlink" href="/login">Log in</Link> · <Link className="textlink" href="/resend-verification">Request a new link</Link></p></section>;
+  return <section className="form-panel auth-panel auth-verify"><span className="eyebrow">One final step</span><h1>Verify your email</h1><p>Confirm your email address to activate your editor account.</p>{!done && <button disabled={busy} onClick={verify}>{busy ? "Verifying…" : "Verify my email"}</button>}{message && <p className="message" role="status">{message}</p>}<p><Link className="textlink" href="/login">Log in</Link> · <Link className="textlink" href="/resend-verification">Request a new link</Link></p></section>;
 }

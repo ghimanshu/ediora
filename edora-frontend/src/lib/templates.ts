@@ -1,6 +1,6 @@
 export type SectionType = "header" | "menu" | "content" | "footer";
 export type TemplateSection = { type: SectionType; title: string; content: string; background_color?: string; text_color?: string };
-export type TemplateLayout = { menu_position: "top" | "left" | "right"; sections: TemplateSection[] };
+export type TemplateLayout = { show_journal_info?: boolean; show_submissions?: boolean | null; menu_position: "top" | "left" | "right"; sections: TemplateSection[] };
 export type WebsiteTemplate = { id: number; name: string; description: string; layout: TemplateLayout; created_at: string; updated_at: string };
 export type TemplateInput = Pick<WebsiteTemplate, "name" | "description" | "layout">;
 export function newTemplate(): TemplateInput {

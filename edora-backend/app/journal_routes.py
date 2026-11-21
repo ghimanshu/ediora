@@ -1,3 +1,4 @@
+from app.journal_menu import menu_order, system_pages
 from copy import deepcopy
 import re
 import unicodedata
@@ -6,12 +7,12 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
-from app.models import Editor, Session, Verification, WebPage, WebsiteTemplate, EditorJournal, EditorJournalPage, now
+from app.models import Editor, Session, Verification, WebPage, WebsiteTemplate, EditorJournal, EditorJournalPage, JournalArticle, JournalIssue, ManuscriptSubmission, SubmissionCaptcha, now
 from app.routes import current_editor, verification_email
 from app.schemas import EditorProfileInput, EditorOutput
 from app.page_schemas import PageInput, PageOutput, PageSummary
 from app.template_schemas import TemplateInput, TemplateLayout
-from app.journal_schemas import JournalCreate, JournalOutput, JournalPageOrder, JournalSummary, JournalStatusUpdate
+from app.journal_schemas import JournalInfo, JournalCreate, JournalOutput, JournalPageOrder, JournalSummary, JournalStatusUpdate
 
 router = APIRouter(prefix="/api/v1/editor")
 
@@ -73,7 +74,7 @@ def journal_output(db, journal):
     owner = db.get(Editor, journal.editor_id)
     pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id).order_by(EditorJournalPage.position)).all()
     first_page = next((page.slug for page in pages if page.slug == "home"), pages[0].slug if pages else "current")
-    return {"id": journal.id, "name": journal.name, "status": journal.status, "editor_code": owner.public_code,
+    return {"menu_order": menu_order(journal, pages), "journal_info": journal.journal_info or {}, "id": journal.id, "name": journal.name, "status": journal.status, "editor_code": owner.public_code,
             "slug": journal.slug, "preview_path": f"/{owner.public_code}/{journal.slug}/{first_page}",
             "template_name": journal.template_name,
             "template_description": journal.template_description, "template_layout": journal.template_layout,
@@ -156,11 +157,15 @@ def add_journal_page(data: PageInput, editor: Editor = Depends(editor_account), 
 def reorder_journal_pages(data: JournalPageOrder, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db), journal_id: int | None = Query(None, gt=0)):
     journal = own_journal(db, editor.id, journal_id)
     pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id)).all()
-    if set(data.page_ids) != {page.id for page in pages}:
-        raise HTTPException(409, "Include all of your journal pages exactly once. Refresh if the page list changed.")
     by_id = {page.id: page for page in pages}
+    system_slugs = {slug for slug, _ in system_pages(pages)}
+    expected = set(by_id) | system_slugs if any(isinstance(item, str) for item in data.page_ids) else set(by_id)
+    if set(data.page_ids) != expected:
+        raise HTTPException(409, "Include all journal pages and built-in pages exactly once. Refresh if the page list changed.")
+    journal.menu_order = [by_id[item].slug if isinstance(item, int) else item for item in data.page_ids]
     for position, page_id in enumerate(data.page_ids):
-        by_id[page_id].position = position
+        if isinstance(page_id, int):
+            by_id[page_id].position = position
     journal.updated_at = now()
     db.commit()
     return journal_output(db, journal)
@@ -171,6 +176,7 @@ def update_journal_page(page_id: int, data: PageInput, editor: Editor = Depends(
     page = db.scalar(select(EditorJournalPage).where(EditorJournalPage.id == page_id, EditorJournalPage.journal_id == journal.id))
     if not page:
         raise HTTPException(404, "Journal page not found")
+    journal.menu_order = [data.slug if slug == page.slug else slug for slug in (journal.menu_order or [])]
     for key, value in data.model_dump().items():
         setattr(page, key, value)
     journal.updated_at = now()
@@ -189,3 +195,22 @@ def update_journal_status(data: JournalStatusUpdate, editor: Editor = Depends(ed
     journal.updated_at = now()
     db.commit()
     return journal_output(db, journal)
+
+@router.patch("/journal/info", response_model=JournalOutput)
+def update_journal_info(data: JournalInfo, editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db), journal_id: int = Query(gt=0)):
+    journal = own_journal(db, editor.id, journal_id)
+    journal.journal_info = data.model_dump()
+    journal.updated_at = now()
+    db.commit()
+    return journal_output(db, journal)
+
+@router.delete("/journal", status_code=204)
+def delete_journal(journal_id: int = Query(gt=0), editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
+    journal = own_journal(db, editor.id, journal_id)
+    db.execute(delete(SubmissionCaptcha).where(SubmissionCaptcha.journal_id == journal.id))
+    db.execute(delete(ManuscriptSubmission).where(ManuscriptSubmission.journal_id == journal.id))
+    db.execute(delete(JournalArticle).where(JournalArticle.journal_id == journal.id))
+    db.execute(delete(JournalIssue).where(JournalIssue.journal_id == journal.id))
+    db.execute(delete(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id))
+    db.delete(journal)
+    db.commit()

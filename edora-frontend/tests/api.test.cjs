@@ -203,3 +203,92 @@ test("feed APIs keep backend errors readable across origins", async () => {
     assert.equal(result.headers.get("access-control-allow-origin"), "*");
   }
 });
+
+
+test("article upload and volume management use editor internal routes", async () => {
+  const origin = process.env.APP_ORIGIN ?? "http://localhost:3000";
+  for (const route of ["editor/articles", "editor/volumes"]) {
+    let forwarded;
+    const handlers = loadModule("src/app/api/[...path]/route.ts", async (url, options) => { forwarded = { url, body: options.body }; return Response.json({ id: 1 }, { status: 201 }); });
+    const payload = route.endsWith("articles") ? { title: "Article", authors: ["A", "B"], pdf_base64: "A".repeat(30000) } : { title: "Volume", volume: "1", article_ids: [1, 2] };
+    const response = await handlers.POST(new NextRequest(`${origin}/api/${route}?journal_id=7`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(payload) }), context(route));
+    assert.equal(response.status, 201);
+    assert.ok(forwarded.url.endsWith(`${route}?journal_id=7`));
+    assert.deepEqual(JSON.parse(forwarded.body), payload);
+  }
+});
+
+test("private PDF downloads forward bytes with the editor session", async () => {
+  const bytes = new TextEncoder().encode("%PDF-1.4\n%%EOF");
+  let auth;
+  const { GET } = loadModule("src/app/api/[...path]/route.ts", async (_url, options) => { auth = options.headers.Authorization; return new Response(bytes, { headers: { "content-type": "application/pdf" } }); });
+  const result = await GET(new NextRequest("http://localhost:3000/api/editor/articles/1/pdf?journal_id=7", { headers: { cookie: "edora_session=test-session" } }), context("editor/articles/1/pdf"));
+  assert.equal(result.status, 200);
+  assert.equal(result.headers.get("content-type"), "application/pdf");
+  assert.equal(auth, "Bearer test-session");
+  assert.deepEqual(new Uint8Array(await result.arrayBuffer()), bytes);
+});
+
+
+test("article and volume filters default to all journals and preserve journal/date queries", async () => {
+  const { publicationQuery } = loadModule("src/lib/publications.ts", async () => { throw new Error("Unexpected fetch"); });
+  assert.equal(publicationQuery({ journal: "", from: "", to: "" }), "");
+  assert.equal(publicationQuery({ journal: "3", from: "2026-11-01", to: "2026-11-20" }), "journal_id=3&date_from=2026-11-01&date_to=2026-11-20");
+  for (const route of ["editor/articles", "editor/volumes"]) {
+    let url;
+    const { GET } = loadModule("src/app/api/[...path]/route.ts", async upstream => { url = upstream; return Response.json([]); });
+    let response = await GET(new NextRequest(`http://localhost:3000/api/${route}`), context(route));
+    assert.equal(response.status, 200);
+    assert.ok(url.endsWith(`/api/v1/${route}`));
+    response = await GET(new NextRequest(`http://localhost:3000/api/${route}?journal_id=3&date_from=2026-11-01&date_to=2026-11-20`), context(route));
+    assert.equal(response.status, 200);
+    assert.ok(url.endsWith("journal_id=3&date_from=2026-11-01&date_to=2026-11-20"));
+  }
+});
+
+test("journal info updates use the internal proxy with the selected journal", async () => {
+  const origin = process.env.APP_ORIGIN ?? "http://localhost:3000";
+  let forwarded;
+  const { PATCH } = loadModule("src/app/api/[...path]/route.ts", async (url, options) => {
+    forwarded = { url, body: JSON.parse(options.body) };
+    return Response.json({ id: 7, journal_info: { language: "English" } });
+  });
+  const response = await PATCH(new NextRequest(`${origin}/api/editor/journal/info?journal_id=7`, { method: "PATCH", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ language: "English" }) }), context("editor/journal/info"));
+  assert.equal(response.status, 200);
+  assert.ok(forwarded.url.endsWith("/api/v1/editor/journal/info?journal_id=7"));
+  assert.deepEqual(forwarded.body, { language: "English" });
+});
+
+test("journal deletion uses the internal API and preserves a bodyless response", async () => {
+  const origin = process.env.APP_ORIGIN ?? "http://localhost:3000";
+  let forwarded;
+  const { DELETE } = loadModule("src/app/api/[...path]/route.ts", async (url, options) => {
+    forwarded = { url, method: options.method };
+    return new Response(null, { status: 204 });
+  });
+  const response = await DELETE(new NextRequest(`${origin}/api/editor/journal?journal_id=7`, { method: "DELETE", headers: { origin } }), context("editor/journal"));
+  assert.equal(response.status, 204);
+  assert.equal(await response.text(), "");
+  assert.ok(forwarded.url.endsWith("/api/v1/editor/journal?journal_id=7"));
+  assert.equal(forwarded.method, "DELETE");
+});
+
+test("public submissions proxy scopes CAPTCHA and manuscript delivery without session credentials", async () => {
+  let upstream;
+  const { submissionProxy } = loadModule("src/lib/journal-submission-proxy.ts", async (url, options) => {
+    upstream = { url, options };
+    return Response.json({ reference: 12, message: "Submitted" }, { status: 201 });
+  });
+  const url = "https://portal.example.com/api/journal/submission?editor_code=ab12cd34&journal_slug=research";
+  const data = { title: "Research", captcha_id: "challenge", captcha_answer: "ABC123" };
+  const result = await submissionProxy()(new NextRequest(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(data) }));
+  assert.equal(result.status, 201);
+  assert.ok(upstream.url.endsWith("/api/v1/public/journals/ab12cd34/research/submission"));
+  assert.equal(upstream.options.headers.Authorization, undefined);
+  assert.deepEqual(JSON.parse(upstream.options.body), data);
+  assert.equal(result.headers.get("access-control-allow-origin"), "*");
+  await submissionProxy(true)(new NextRequest(url));
+  assert.ok(upstream.url.endsWith("/submission/captcha"));
+  const invalid = await submissionProxy(true)(new NextRequest("https://portal.example.com/api/journal/submission?editor_code=invalid&journal_slug=research"));
+  assert.equal(invalid.status, 422);
+});

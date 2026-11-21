@@ -12,6 +12,11 @@ from app.admin_journal_routes import router as admin_journal_router
 
 from app.journal_feed_routes import router as journal_feed_router
 
+from app.article_volume_routes import router as article_volume_router
+
+from app.submission_routes import router as submission_router
+
+
 app = FastAPI(title="Edora API", version="1.0.0")
 app.include_router(router)
 app.include_router(template_router)
@@ -20,6 +25,8 @@ app.include_router(journal_router)
 app.include_router(public_journal_router)
 app.include_router(admin_journal_router)
 app.include_router(journal_feed_router)
+app.include_router(article_volume_router)
+app.include_router(submission_router)
 
 @app.get("/health")
 def health():

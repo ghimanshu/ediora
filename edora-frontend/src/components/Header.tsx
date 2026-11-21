@@ -16,5 +16,5 @@ export default function Header() {
   }
   return <header><Link className="brand" href="/">edora<span>EDITOR COMMUNITY</span></Link>
     <nav aria-label="Main navigation">{[["/", "Home"], ["/about", "About us"], ["/editors", "For editors"], ["/contact", "Contact us"]].map(([href, text]) => <Link aria-current={path === href ? "page" : undefined} key={href} href={href}>{text}</Link>)}
-    {signedIn ? <><Link href={isAdmin ? "/admin" : "/dashboard"}>{isAdmin ? "Admin" : "My account"}</Link><button className="small" onClick={logout}>Log out</button></> : <><Link href="/login">Log in</Link><Link className="button small" href="/register">Become an editor</Link></>}</nav>{error && <p role="alert">{error}</p>}</header>;
+    {signedIn ? <><Link href={isAdmin ? "/admin" : "/dashboard/profile"}>{isAdmin ? "Admin" : "My account"}</Link><button className="small" onClick={logout}>Log out</button></> : <><Link href="/login">Log in</Link><Link className="button small" href="/register">Become an editor</Link></>}</nav>{error && <p role="alert">{error}</p>}</header>;
 }

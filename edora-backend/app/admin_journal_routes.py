@@ -97,7 +97,7 @@ def export_editor_journal(journal_id: int, admin: Editor = Depends(current_admin
     pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id).order_by(EditorJournalPage.position)).all()
     owner = db.get(Editor, journal.editor_id)
     try:
-        data = build_website_zip(journal, pages, owner.public_code, settings.frontend_url)
+        data = build_website_zip(journal, pages, owner.public_code, settings.frontend_url, owner.email)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     return Response(data, media_type="application/zip", headers={
