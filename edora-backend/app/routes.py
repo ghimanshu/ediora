@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, delete, func, or_
 from sqlalchemy.exc import IntegrityError
@@ -85,7 +85,7 @@ def login(data: Login, db: DBSession = Depends(get_db)):
     db.commit()
     return {"access_token": token, "token_type": "bearer", "expires_in": settings.session_hours * 3600}
 
-def current_editor(credentials: HTTPAuthorizationCredentials | None = Depends(bearer), db: DBSession = Depends(get_db)):
+def current_editor(request: Request, credentials: HTTPAuthorizationCredentials | None = Depends(bearer), db: DBSession = Depends(get_db)):
     if not credentials:
         raise HTTPException(401, "Sign in required")
     session = db.scalar(select(Session).where(Session.token_hash == digest(credentials.credentials), Session.expires_at > now()))
@@ -94,6 +94,13 @@ def current_editor(credentials: HTTPAuthorizationCredentials | None = Depends(be
     editor = db.get(Editor, session.editor_id)
     if not editor or not editor.is_verified or not editor.is_active:
         raise HTTPException(401, "Sign in required")
+    requested_code=request.query_params.get("editor_code")
+    header_code=request.headers.get("x-editor-code")
+    if request.method not in {"GET","HEAD","OPTIONS"} and not (header_code or requested_code):
+        raise HTTPException(422,"Editor code is required")
+    for code in (requested_code,header_code):
+        if code is not None and code != editor.public_code:
+            raise HTTPException(403,"Editor code does not match the authenticated account")
     return editor
 
 @router.get("/auth/me", response_model=EditorOutput)
@@ -101,7 +108,7 @@ def me(editor: Editor = Depends(current_editor)):
     return editor
 
 @router.post("/auth/logout", status_code=204)
-def logout(credentials: HTTPAuthorizationCredentials | None = Depends(bearer), db: DBSession = Depends(get_db)):
+def logout(editor: Editor = Depends(current_editor), credentials: HTTPAuthorizationCredentials | None = Depends(bearer), db: DBSession = Depends(get_db)):
     if credentials:
         db.execute(delete(Session).where(Session.token_hash == digest(credentials.credentials)))
         db.commit()

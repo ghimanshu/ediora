@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    internal_api_key: str = ""
     super_admin_email: str = ""
     super_admin_password: str = ""
     database_url: str = "postgresql+psycopg://edora:edora@localhost:5432/edora"

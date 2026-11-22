@@ -23,6 +23,7 @@ def challenge_hash(token, answer):
     return hashlib.sha256((token + answer.strip().upper()).encode()).hexdigest()
 
 class SubmissionInput(BaseModel):
+    how_to_cite: str = Field(default="",max_length=2000)
     full_name: str = Field(min_length=1,max_length=150)
     email: EmailStr
     title: str = Field(min_length=1,max_length=300)
@@ -86,7 +87,7 @@ def submit(data: SubmissionInput, editor_code: str = Path(pattern=r"^[a-z0-9]{8}
     if not 1 <= len(authors) <= 50 or any(len(name)>120 for name in authors):
         db.commit()
         raise HTTPException(422,"Provide up to 50 author names, each no longer than 120 characters.")
-    record=JournalArticle(journal_id=journal.id,submitter_name=data.full_name,submitter_email=str(data.email),title=data.title,authors=authors,abstract=data.abstract,pdf_content=pdf,pdf_size=len(pdf),pdf_filename="manuscript.pdf",status="Submitted",is_published=False)
+    record=JournalArticle(journal_id=journal.id,submitter_name=data.full_name,submitter_email=str(data.email),title=data.title,authors=authors,abstract=data.abstract,how_to_cite=data.how_to_cite,pdf_content=pdf,pdf_size=len(pdf),pdf_filename="manuscript.pdf",status="Submitted",is_published=False)
     db.add(record)
     db.commit()
     try:

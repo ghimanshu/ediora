@@ -33,7 +33,7 @@ def test_offline_zip_files_links_and_saved_design():
         assert "#123abc" in css and "#ffffff" in css
         assert "grid-template-columns" in css and "@media" in css
         home = archive.read("my-journal/index.html").decode()
-        assert "Welcome" in home and "onclick" not in home and "<script" not in home
+        assert "Welcome" in home and "onclick" not in home and "<script>bad()" not in home
         assert "My &lt;Journal&gt;" in home
         assert "Hidden menu heading" not in home
         about = archive.read("my-journal/about.html").decode()
@@ -74,6 +74,7 @@ def test_export_wires_live_current_and_archives_javascript():
         assert '/api/journal/' in runtime and 'credentials: "omit"' in runtime
         assert 'url.searchParams.set("editor_code"' in runtime and 'url.searchParams.set("journal_slug"' in runtime
         assert '.innerHTML' not in runtime
+        assert "article.how_to_cite" in runtime and "How to Cite" in runtime
         for kind in ("current", "archives"):
             html = archive.read(f"journal/{kind}.html").decode()
             assert f'data-journal-feed="{kind}"' in html
@@ -130,4 +131,21 @@ def test_export_submission_form_uses_internal_website_api():
         script=archive.read("submit/assets/journal-submission.js").decode()
         assert "/api/journal/submission" in script and "captcha_answer" in script
         assert "pdf_base64" in script and '.innerHTML' not in script
+        assert "how_to_cite" in script and "How to Cite (optional)" in script
         assert 'href="submission.html"' in archive.read("submit/index.html").decode()
+
+def test_all_exported_pages_load_cached_live_journal_information():
+    layout={"menu_position":"top","sections":[{"type":kind,"title":kind,"content":""} for kind in ("header","menu","content","footer")]}
+    journal=SimpleNamespace(slug="metadata",name="Metadata",template_layout=layout,journal_info={"language":"English"})
+    pages=[SimpleNamespace(title="Home",slug="home",content_html="<p>Home</p>"),SimpleNamespace(title="About",slug="about",content_html="<p>About</p>")]
+    with ZipFile(BytesIO(build_website_zip(journal,pages,"1234abcd",editor_email="editor@example.com"))) as archive:
+        for filename in archive.namelist():
+            if filename.endswith(".html"):
+                html=archive.read(filename).decode()
+                assert html.count('src="assets/journal-config.js"')==1
+                assert 'src="assets/journal-info.js"' in html
+                assert 'data-journal-info-fields' in html
+                assert 'data-journal-editor-email' in html
+        runtime=archive.read("metadata/assets/journal-info.js").decode()
+        assert '/api/journal/info' in runtime and 'localStorage' in runtime
+        assert '.innerHTML' not in runtime and 'credentials: "omit"' in runtime

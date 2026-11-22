@@ -7,7 +7,7 @@ const corsHeaders = {
   "X-Content-Type-Options": "nosniff",
 };
 export function feedOptions() { return new NextResponse(null, { status: 204, headers: corsHeaders }); }
-export function journalFeedProxy(kind: "current" | "archives") {
+export function journalFeedProxy(kind: "current" | "archives" | "info") {
   return async (request: NextRequest) => {
     const query = request.nextUrl.searchParams;
     const code = query.get("editor_code") ?? "";

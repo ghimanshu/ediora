@@ -12,6 +12,7 @@ from app.models import Editor, EditorJournal, JournalIssue, JournalArticle
 router = APIRouter(prefix="/api/v1/public/journals")
 
 class ArticleOutput(BaseModel):
+    how_to_cite: str
     id: int
     title: str
     authors: list[str]
@@ -69,7 +70,7 @@ def serialize_issues(db, issues):
         if article.pdf_size:
             safe_url = settings.frontend_url.rstrip("/") + "/api/journal/article-pdf?" + urlencode({"editor_code": owner.public_code, "journal_slug": owner_journal.slug, "article_id": article.id})
         grouped[article.issue_id].append({"id": article.id, "title": article.title, "authors": article.authors,
-                                         "abstract": article.abstract, "article_url": safe_url})
+                                         "how_to_cite": article.how_to_cite, "abstract": article.abstract, "article_url": safe_url})
     return [{"id": issue.id, "title": issue.title, "volume": issue.volume, "number": issue.number,
              "published_at": issue.published_at, "articles": grouped[issue.id]} for issue in issues]
 
@@ -100,3 +101,10 @@ def public_article_pdf(article_id: int, editor_code: str = Path(pattern=r"^[a-z0
     if not article:
         raise HTTPException(404, "Published article PDF not found")
     return pdf_response(article, inline=True)
+
+@router.get("/{editor_code}/{journal_slug}/info")
+def journal_info(editor_code: str = Path(pattern=r"^[a-z0-9]{8}$"),journal_slug: str = Path(min_length=1,max_length=150,pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$"),db: DBSession=Depends(get_db)):
+    journal_id=public_journal_id(db,editor_code,journal_slug)
+    journal=db.get(EditorJournal,journal_id)
+    editor=db.get(Editor,journal.editor_id)
+    return {"editor_code":editor_code,"journal_slug":journal_slug,"journal_info":journal.journal_info or {},"editor_email":editor.email,"updated_at":journal.updated_at}

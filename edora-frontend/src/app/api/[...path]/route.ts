@@ -40,6 +40,22 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   const session = request.cookies.get(cookieName)?.value;
   if (session) headers.Authorization = `Bearer ${session}`;
   try {
+    if (request.method !== "GET") {
+      const gatewayKey = process.env.INTERNAL_API_KEY;
+      if (!gatewayKey) return NextResponse.json({ detail: "Internal API gateway is not configured" }, { status: 503 });
+      headers["X-Internal-API-Key"] = gatewayKey;
+      const privateWrite = path.startsWith("editor/") || path.startsWith("admin/") || path === "website/template" || path === "auth/logout";
+      if (privateWrite) {
+        if (!session) return NextResponse.json({ detail: "Sign in required" }, { status: 401 });
+        const identity = await fetch(`${backend}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${session}` }, cache: "no-store", signal: AbortSignal.timeout(20000) });
+        if (!identity.ok) return NextResponse.json({ detail: "Session expired or invalid" }, { status: identity.status === 403 ? 403 : 401 });
+        const account = await identity.json();
+        if (!/^[a-z0-9]{8}$/.test(account.public_code ?? "")) return NextResponse.json({ detail: "Invalid account editor code" }, { status: 502 });
+        const requestedCodes = [request.nextUrl.searchParams.get("editor_code"), request.headers.get("x-editor-code")];
+        if (requestedCodes.some(code => code !== null && code !== account.public_code)) return NextResponse.json({ detail: "Editor code does not match the authenticated account" }, { status: 403 });
+        headers["X-Editor-Code"] = account.public_code;
+      }
+    }
     const body = request.method === "GET" ? undefined : await request.text();
     const maxBodyBytes = /^editor\/articles(?:\/[1-9]\d*)?$/.test(path) ? 15000000 : path === "editor/journal" && request.method === "POST" ? 6500000 : /^(?:admin\/pages(?:\/[1-9]\d*)?|editor\/journal\/pages(?:\/[1-9]\d*)?)$/.test(path) ? 650000 : 20000;
     if (body && Buffer.byteLength(body, "utf8") > maxBodyBytes) return NextResponse.json({ detail: "Request too large" }, { status: 413 });

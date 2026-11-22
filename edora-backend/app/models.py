@@ -138,6 +138,7 @@ class JournalArticle(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
     title: Mapped[str] = mapped_column(String(300))
     authors: Mapped[list] = mapped_column(JSON, default=list)
+    how_to_cite: Mapped[str] = mapped_column(Text, default="", server_default="")
     abstract: Mapped[str] = mapped_column(Text, default="")
     article_url: Mapped[str] = mapped_column(String(2048), default="")
     position: Mapped[int] = mapped_column(default=0)

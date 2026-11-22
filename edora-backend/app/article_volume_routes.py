@@ -5,7 +5,7 @@ from datetime import datetime, date, time, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, field_validator, model_validator
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
 from app.models import Editor, EditorJournal, JournalArticle, JournalIssue, now
@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api/v1/editor")
 MAX_PDF_BYTES = 10 * 1024 * 1024
 
 class ArticleInput(BaseModel):
+    how_to_cite: str = Field(default="", max_length=2000)
+    volume_id: int | None = Field(default=None, gt=0, strict=True)
     status: Literal["Submitted", "Published", "UnPublished"] | None = None
     title: str = Field(min_length=1, max_length=300)
     authors: list[str] = Field(min_length=1, max_length=50)
@@ -31,6 +33,7 @@ class ArticleInput(BaseModel):
         return [name.strip() for name in names]
 
 class ArticleOutput(BaseModel):
+    how_to_cite: str
     status: Literal["Submitted", "Published", "UnPublished"]
     submitter_name: str
     submitter_email: str
@@ -93,7 +96,7 @@ class VolumeOutput(BaseModel):
 def article_output(db, article, journal_name=None):
     volume = db.get(JournalIssue, article.issue_id) if article.issue_id else None
     return {"status": article.status, "submitter_name": article.submitter_name, "submitter_email": article.submitter_email, "notification_sent": article.notification_sent, "journal_name": journal_name if journal_name is not None else db.get(EditorJournal, article.journal_id).name, "created_at": article.created_at, "id": article.id, "journal_id": article.journal_id, "title": article.title, "authors": article.authors,
-            "abstract": article.abstract, "is_published": article.is_published, "volume_id": article.issue_id,
+            "how_to_cite": article.how_to_cite, "abstract": article.abstract, "is_published": article.is_published, "volume_id": article.issue_id,
             "volume_title": volume.title if volume else None, "has_pdf": article.pdf_size > 0, "pdf_size": article.pdf_size}
 
 def volume_output(db, volume, journal_name=None):
@@ -132,10 +135,28 @@ def set_article_data(article, data, creating=False):
     status = data.status or ("Published" if data.is_published else "UnPublished")
     if status == "Published" and not article.pdf_size:
         raise HTTPException(422, "Add a PDF before publishing this article")
-    for key, value in data.model_dump(exclude={"pdf_base64", "status", "is_published"}).items():
+    excluded = {"pdf_base64", "status", "is_published", "volume_id"}
+    if "how_to_cite" not in data.model_fields_set:
+        excluded.add("how_to_cite")
+    for key, value in data.model_dump(exclude=excluded).items():
         setattr(article, key, value)
     article.status = status
     article.is_published = status == "Published"
+
+def assign_article_volume(db, journal, article, data):
+    if "volume_id" not in data.model_fields_set:
+        return
+    target = find_volume(db, journal.id, data.volume_id) if data.volume_id is not None else None
+    if article.issue_id == (target.id if target else None):
+        return
+    if target is None:
+        article.issue_id = None
+        article.position = 0
+    else:
+        last_position = db.scalar(select(func.max(JournalArticle.position)).where(JournalArticle.journal_id == journal.id, JournalArticle.issue_id == target.id))
+        article.issue_id = target.id
+        article.position = (last_position + 1) if last_position is not None else 0
+
 
 def created_range(column, date_from, date_to):
     if date_from and date_to and date_from > date_to:
@@ -165,6 +186,7 @@ def create_article(data: ArticleInput, journal_id: int = Query(gt=0), editor: Ed
     journal = own_journal(db, editor.id, journal_id)
     article = JournalArticle(journal_id=journal.id, issue_id=None, pdf_size=0)
     set_article_data(article, data, creating=True)
+    assign_article_volume(db, journal, article, data)
     db.add(article)
     journal.updated_at = now()
     db.commit()
@@ -175,6 +197,7 @@ def edit_article(article_id: int, data: ArticleInput, journal_id: int = Query(gt
     journal = own_journal(db, editor.id, journal_id)
     article = find_article(db, journal.id, article_id)
     set_article_data(article, data)
+    assign_article_volume(db, journal, article, data)
     journal.updated_at = now()
     db.commit()
     return article_output(db, article)

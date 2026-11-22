@@ -48,6 +48,12 @@
       var authors = element("p", Array.isArray(article.authors) ? article.authors.join(", ") : "");
       authors.className = "journal-article-authors";
       info.appendChild(authors);
+      if (article.how_to_cite) {
+        var citation = element("details"); citation.className = "article-citation";
+        citation.appendChild(element("summary", "How to Cite"));
+        citation.appendChild(element("p", article.how_to_cite));
+        info.appendChild(citation);
+      }
       item.appendChild(info);
       var url = safeLink(article.article_url);
       if (url) {

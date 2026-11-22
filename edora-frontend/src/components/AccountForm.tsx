@@ -2,6 +2,7 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import AuthCardHeader from "@/components/AuthCardHeader";
 import { api } from "@/lib/api";
 export default function AccountForm({ mode }: { mode: "login" | "register" | "resend" | "contact" }) {
   const [message, setMessage] = useState(""); const [error, setError] = useState(false); const [busy, setBusy] = useState(false);
@@ -20,7 +21,7 @@ export default function AccountForm({ mode }: { mode: "login" | "register" | "re
     finally { setBusy(false); }
   }
   const title = { login: "Welcome back", register: "Create your editor account", resend: "Verify your email", contact: "Let’s talk." }[mode];
-  return <section className={mode === "contact" ? "form-panel" : `form-panel auth-panel auth-${mode}`}>{mode === "login" ? <div className="login-card-header"><span className="login-card-mark" aria-hidden="true"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M12 5v15M3 4l9 2 9-2v15l-9 2-9-2V4Z" /></svg></span><div><strong>Edora publishing portal</strong><p>Your journals. Your publishing workspace.</p></div></div> : <span className="eyebrow">Edora community</span>}<h1>{title}</h1><p>{mode === "register" ? "Join Edora and start managing your journals." : mode === "contact" ? "Send a message to the Edora team." : mode === "resend" ? "Enter your email to receive a new verification link." : "Sign in to your publishing workspace."}</p>
+  return <section className={mode === "contact" ? "form-panel" : `form-panel auth-panel auth-${mode}`}>{mode !== "contact" ? <AuthCardHeader /> : <span className="eyebrow">Edora community</span>}<h1>{title}</h1><p>{mode === "register" ? "Join Edora and start managing your journals." : mode === "contact" ? "Send a message to the Edora team." : mode === "resend" ? "Enter your email to receive a new verification link." : "Sign in to your publishing workspace."}</p>
     <form onSubmit={submit}><div className="fields">
       {mode === "register" && <><label>First name<input name="first_name" autoComplete="given-name" maxLength={80} required /></label><label>Last name<input name="last_name" autoComplete="family-name" maxLength={80} required /></label><label>Phone<input name="phone" type="tel" autoComplete="tel" minLength={7} maxLength={25} required /></label><label>Gender<select name="gender" required defaultValue=""><option value="" disabled>Select an option</option>{["Male", "Female", "Other", "Prefer not to say"].map(g => <option key={g}>{g}</option>)}</select></label></>}
       {mode === "contact" && <label className="wide">Name<input name="name" autoComplete="name" maxLength={100} required /></label>}

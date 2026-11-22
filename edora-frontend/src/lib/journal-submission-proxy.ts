@@ -23,7 +23,13 @@ export function submissionProxy(captcha = false) {
         try { JSON.parse(body); } catch { return NextResponse.json({ detail: "Invalid JSON" }, { status: 422, headers }); }
       }
       const backend = process.env.BACKEND_URL ?? "http://localhost:8000";
-      const response = await fetch(`${backend}/api/v1/public/journals/${code}/${slug}/submission${captcha ? "/captcha" : ""}`, { method: captcha ? "GET" : "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body, cache: "no-store", signal: AbortSignal.timeout(30000) });
+      const upstreamHeaders: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json" };
+      if (!captcha) {
+        const gatewayKey = process.env.INTERNAL_API_KEY;
+        if (!gatewayKey) return NextResponse.json({ detail: "Internal API gateway is not configured" }, { status: 503, headers });
+        upstreamHeaders["X-Internal-API-Key"] = gatewayKey;
+      }
+      const response = await fetch(`${backend}/api/v1/public/journals/${code}/${slug}/submission${captcha ? "/captcha" : ""}`, { method: captcha ? "GET" : "POST", headers: upstreamHeaders, body, cache: "no-store", signal: AbortSignal.timeout(30000) });
       return NextResponse.json(await response.json(), { status: response.status, headers });
     } catch { return NextResponse.json({ detail: "Submission service is unavailable. Please try again." }, { status: 502, headers }); }
   };

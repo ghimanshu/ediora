@@ -33,6 +33,7 @@ class TokenInput(BaseModel):
     token: str = Field(min_length=20, max_length=200)
 
 class EditorOutput(EmailInput):
+    public_code: str
     id: int
     first_name: str
     last_name: str

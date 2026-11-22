@@ -23,6 +23,7 @@
     field("title", "Article heading", "text", 300, true);
     field("authors", "Author names", "text", 2000, true);
     field("abstract", "Abstract / message", "textarea", 10000, true);
+    var citation = field("how_to_cite", "How to Cite (optional)", "textarea", 2000, true); citation.required = false; citation.minLength = 0; citation.rows = 2;
     var pdf = field("pdf", "Manuscript PDF (maximum 10 MB)", "file", null, true); pdf.accept = ".pdf,application/pdf";
     fields.appendChild(grid);
     var captchaBox = node("div"); captchaBox.className = "submission-captcha";
@@ -54,7 +55,7 @@
       try {
         var bytes = new Uint8Array(await file.arrayBuffer()); var parts = [];
         for (var i = 0; i < bytes.length; i += 32768) parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 32768)));
-        var payload = { full_name: form.elements.full_name.value, email: form.elements.email.value, title: form.elements.title.value, authors: form.elements.authors.value, abstract: form.elements.abstract.value, pdf_base64: btoa(parts.join("")), captcha_id: captchaId, captcha_answer: answer.value };
+        var payload = { full_name: form.elements.full_name.value, email: form.elements.email.value, title: form.elements.title.value, authors: form.elements.authors.value, abstract: form.elements.abstract.value, how_to_cite: form.elements.how_to_cite.value, pdf_base64: btoa(parts.join("")), captcha_id: captchaId, captcha_answer: answer.value };
         var data = await responseData(await fetch(endpoint(""), { method: "POST", credentials: "omit", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(40000) }));
         form.reset(); status.setAttribute("role", "status"); status.textContent = data.message + " Reference: " + data.reference;
       } catch (error) { status.setAttribute("role", "alert"); status.textContent = error.message; }

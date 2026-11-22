@@ -1,5 +1,5 @@
 export type ArticleStatus = "Submitted" | "Published" | "UnPublished";
-export type ManagedArticle = { status: ArticleStatus; submitter_name: string; submitter_email: string; notification_sent: boolean; journal_name: string; created_at: string; id: number; journal_id: number; title: string; authors: string[]; abstract: string; is_published: boolean; volume_id: number | null; volume_title: string | null; has_pdf: boolean; pdf_size: number };
+export type ManagedArticle = { how_to_cite: string; status: ArticleStatus; submitter_name: string; submitter_email: string; notification_sent: boolean; journal_name: string; created_at: string; id: number; journal_id: number; title: string; authors: string[]; abstract: string; is_published: boolean; volume_id: number | null; volume_title: string | null; has_pdf: boolean; pdf_size: number };
 export type ManagedVolume = { is_archived: boolean; journal_name: string; created_at: string; id: number; journal_id: number; title: string; volume: string; number: string; is_published: boolean; published_at: string | null; article_ids: number[] };
 export async function pdfBase64(file: File) {
   if (file.size > 10 * 1024 * 1024) throw new Error("PDF must not exceed 10 MB");
