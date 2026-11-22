@@ -12,7 +12,7 @@ from app.routes import current_editor, verification_email
 from app.schemas import EditorProfileInput, EditorOutput
 from app.page_schemas import PageInput, PageOutput, PageSummary
 from app.template_schemas import TemplateInput, TemplateLayout
-from app.journal_schemas import JournalInfo, JournalCreate, JournalOutput, JournalPageOrder, JournalSummary, JournalStatusUpdate
+from app.journal_schemas import JournalInfo, JournalCreate, JournalOutput, JournalPageOrder, JournalSummary, JournalStatusUpdate, JournalPageStatus
 
 router = APIRouter(prefix="/api/v1/editor")
 
@@ -73,7 +73,10 @@ def list_journals(editor: Editor = Depends(editor_account), db: DBSession = Depe
 def journal_output(db, journal):
     owner = db.get(Editor, journal.editor_id)
     pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id).order_by(EditorJournalPage.position)).all()
-    first_page = next((page.slug for page in pages if page.slug == "home"), pages[0].slug if pages else "current")
+    active_pages = [page for page in pages if page.is_active]
+    inactive_slugs = [page.slug for page in pages if not page.is_active]
+    defaults = system_pages(active_pages,inactive_slugs)
+    first_page = next((page.slug for page in active_pages if page.slug == "home"), active_pages[0].slug if active_pages else defaults[0][0] if defaults else "current")
     return {"menu_order": menu_order(journal, pages), "journal_info": journal.journal_info or {}, "id": journal.id, "name": journal.name, "status": journal.status, "editor_code": owner.public_code,
             "slug": journal.slug, "preview_path": f"/{owner.public_code}/{journal.slug}/{first_page}",
             "template_name": journal.template_name,
@@ -116,7 +119,7 @@ def create_journal(data: JournalCreate, editor: Editor = Depends(editor_account)
         for position, page_id in enumerate(data.page_ids):
             page = source_map[page_id]
             safe = PageInput(title=page.title, slug=page.slug, content_html=page.content_html)
-            db.add(EditorJournalPage(journal_id=journal.id, position=position, **safe.model_dump()))
+            db.add(EditorJournalPage(journal_id=journal.id, position=position, source_type="admin", menu_group=page.menu_group, **safe.model_dump()))
         for offset, page in enumerate(data.new_pages):
             db.add(EditorJournalPage(journal_id=journal.id, position=len(data.page_ids) + offset, **page.model_dump()))
         db.commit()
@@ -214,3 +217,57 @@ def delete_journal(journal_id: int = Query(gt=0), editor: Editor = Depends(edito
     db.execute(delete(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id))
     db.delete(journal)
     db.commit()
+
+@router.delete("/journal/pages/{page_id}",response_model=JournalOutput)
+def delete_own_page(page_id: int,journal_id: int=Query(gt=0),editor: Editor=Depends(editor_account),db: DBSession=Depends(get_db)):
+    journal=own_journal(db,editor.id,journal_id)
+    page=db.scalar(select(EditorJournalPage).where(EditorJournalPage.id==page_id,EditorJournalPage.journal_id==journal.id))
+    if not page:
+        raise HTTPException(404,"Journal page not found")
+    if page.source_type!="editor":
+        raise HTTPException(403,"Admin page copies can be deactivated, not deleted")
+    journal.menu_order=[slug for slug in (journal.menu_order or []) if slug!=page.slug]
+    db.delete(page)
+    journal.updated_at=now()
+    db.commit()
+    return journal_output(db,journal)
+
+@router.patch("/journal/pages/{page_id}/status",response_model=JournalOutput)
+def set_admin_page_status(page_id: int,data: JournalPageStatus,journal_id: int=Query(gt=0),editor: Editor=Depends(editor_account),db: DBSession=Depends(get_db)):
+    journal=own_journal(db,editor.id,journal_id)
+    page=db.scalar(select(EditorJournalPage).where(EditorJournalPage.id==page_id,EditorJournalPage.journal_id==journal.id))
+    if not page:
+        raise HTTPException(404,"Journal page not found")
+    if page.source_type!="admin":
+        raise HTTPException(403,"Only admin page copies use this visibility control")
+    page.is_active=data.is_active
+    journal.updated_at=now()
+    db.commit()
+    return journal_output(db,journal)
+
+
+@router.post("/journal/pages/library/{page_id}", response_model=JournalOutput)
+def activate_library_page(page_id: int, journal_id: int = Query(gt=0), editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
+    journal = own_journal(db, editor.id, journal_id)
+    source = db.get(WebPage, page_id)
+    if not source:
+        raise HTTPException(404, "Admin page no longer available; refresh the page list")
+    pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id)).all()
+    existing = next((page for page in pages if page.slug == source.slug), None)
+    if existing:
+        if existing.source_type != "admin":
+            raise HTTPException(409, "A personal page already uses this URL slug")
+        existing.is_active = True
+    else:
+        if len(pages) >= 100:
+            raise HTTPException(409, "A journal can contain at most 100 pages")
+        safe = PageInput(title=source.title, slug=source.slug, content_html=source.content_html)
+        db.add(EditorJournalPage(journal_id=journal.id, position=max((page.position for page in pages), default=-1)+1,
+                                source_type="admin", menu_group=source.menu_group, is_active=True, **safe.model_dump()))
+    journal.updated_at = now()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Page list changed; refresh and try again")
+    return journal_output(db, journal)

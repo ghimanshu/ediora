@@ -149,3 +149,72 @@ def test_all_exported_pages_load_cached_live_journal_information():
         runtime=archive.read("metadata/assets/journal-info.js").decode()
         assert '/api/journal/info' in runtime and 'localStorage' in runtime
         assert '.innerHTML' not in runtime and 'credentials: "omit"' in runtime
+
+def test_editor_in_chief_header_only_on_home_with_live_update_hook():
+    layout={"menu_position":"top","sections":[{"type":kind,"title":kind,"content":""} for kind in ("header","menu","content","footer")]}
+    journal=SimpleNamespace(slug="chief",name="Chief",template_layout=layout,journal_info={"editor_in_chief":"Dr. <Example>"})
+    pages=[SimpleNamespace(title="Home",slug="home",content_html="<p>Home</p>"),SimpleNamespace(title="About",slug="about",content_html="<p>About</p>")]
+    with ZipFile(BytesIO(build_website_zip(journal,pages,"1234abcd"))) as archive:
+        home=archive.read("chief/index.html").decode()
+        assert 'data-editor-in-chief' in home and 'Editor-in-Chief:' in home and 'Dr. &lt;Example&gt;' in home
+        assert 'data-editor-in-chief' not in archive.read("chief/about.html").decode()
+        assert 'data-editor-in-chief' not in archive.read("chief/current.html").decode()
+    journal.journal_info={}
+    with ZipFile(BytesIO(build_website_zip(journal,pages,"1234abcd"))) as archive:
+        assert 'data-editor-in-chief hidden' in archive.read("chief/index.html").decode()
+
+def test_downloads_panel_contains_offline_pdf_assets_and_can_be_disabled():
+    from pathlib import Path
+    layout={"menu_position":"top","show_journal_info":False,"show_submissions":False,"show_downloads":True,"sections":[{"type":kind,"title":kind,"content":""} for kind in ("header","menu","content","footer")]}
+    journal=SimpleNamespace(slug="downloads",name="Downloads",template_layout=layout,journal_info={})
+    pages=[SimpleNamespace(title="Home",slug="home",content_html="<p>Home</p>")]
+    with ZipFile(BytesIO(build_website_zip(journal,pages,"1234abcd"))) as archive:
+        for page in ("index","current","archives","submission"):
+            html=archive.read(f"downloads/{page}.html").decode()
+            assert 'aria-label="Journal downloads"' in html
+            assert 'href="downloads/copyright-form.pdf" download="copyright-form.pdf"' in html
+            assert 'href="downloads/Sample-Manuscript.pdf" download="Sample-Manuscript.pdf"' in html
+        for filename in ("copyright-form.pdf","Sample-Manuscript.pdf"):
+            content=archive.read(f"downloads/downloads/{filename}")
+            assert content.startswith(b"%PDF-")
+            assert content==(Path(__file__).resolve().parents[1]/"app/static/downloads"/filename).read_bytes()
+    layout["show_downloads"]=False
+    with ZipFile(BytesIO(build_website_zip(journal,pages,"1234abcd"))) as archive:
+        assert not any(name.endswith(".pdf") for name in archive.namelist())
+        assert 'aria-label="Journal downloads"' not in archive.read("downloads/index.html").decode()
+
+def test_inactive_pages_are_excluded_from_export_and_not_regenerated():
+    layout={"menu_position":"top","sections":[{"type":kind,"title":kind,"content":""} for kind in ("header","menu","content","footer")]}
+    journal=SimpleNamespace(slug="visibility",name="Visibility",template_layout=layout,journal_info={})
+    pages=[SimpleNamespace(title="Home",slug="home",content_html="<p>Home</p>",is_active=True),SimpleNamespace(title="Admin About",slug="about",content_html="<p>Hidden content</p>",is_active=False),SimpleNamespace(title="Current",slug="current",content_html="<p>Hidden current</p>",is_active=False),SimpleNamespace(title="Submissions",slug="submissions",content_html="<p>Hidden submission</p>",is_active=False)]
+    with ZipFile(BytesIO(build_website_zip(journal,pages,"1234abcd",editor_email="editor@example.com"))) as archive:
+        names=archive.namelist()
+        assert "visibility/about.html" not in names and "visibility/current.html" not in names
+        assert "visibility/submissions.html" not in names and "visibility/submission.html" not in names
+        html=archive.read("visibility/index.html").decode()
+        assert "Hidden content" not in html
+        assert 'href="about.html"' not in html and 'aria-label="Journal submissions"' not in html
+
+
+def test_export_groups_policy_pages_and_keeps_contact_in_main_menu():
+    journal=SimpleNamespace(journal_info={},slug="policies",name="Policies",template_layout={"menu_position":"top","sections":[{"type":kind,"title":kind,"content":""} for kind in ("header","menu","content","footer")]})
+    pages=[SimpleNamespace(title=title,slug=slug,menu_group=group,content_html="<p>Policy text</p>") for title,slug,group in [("Home","home",""),("Ethics policy","ethics-policy","Ethics"),("AI policy","ai-policy","Ethics"),("Guidelines","guidelines","For Authors"),("Contact Us","contact-us","")]]
+    with ZipFile(BytesIO(build_website_zip(journal,pages,"ab12cd34",editor_email="editor@example.com"))) as archive:
+        html=archive.read("policies/contact-us.html").decode()
+        assert html.count("<summary>Ethics</summary>")==1
+        assert html.count("<summary>For Authors</summary>")==1
+        assert 'href="ethics-policy.html"' in html and 'href="ai-policy.html"' in html
+        assert 'href="contact-us.html"' in html
+        assert 'mailto:editor@example.com' in html
+
+
+def test_active_policy_submenu_stays_expanded_on_exported_pages():
+    journal=SimpleNamespace(journal_info={},slug="menus",name="Menus",template_layout={"menu_position":"top","sections":[{"type":kind,"title":kind,"content":""} for kind in ("header","menu","content","footer")]})
+    pages=[SimpleNamespace(title=slug,slug=slug,menu_group=group,content_html="<p>Content</p>") for slug,group in [("home",""),("ethics","Ethics"),("ai","Ethics"),("guidelines","For Authors")]]
+    with ZipFile(BytesIO(build_website_zip(journal,pages,"ab12cd34"))) as archive:
+        for slug in ("ethics","ai"):
+            html=archive.read(f"menus/{slug}.html").decode()
+            assert '<details class="journal-menu-group" data-active="true" open><summary>Ethics</summary>' in html
+            assert '<details class="journal-menu-group" data-active="false"><summary>For Authors</summary>' in html
+        home=archive.read("menus/index.html").decode()
+        assert 'data-active="true" open' not in home

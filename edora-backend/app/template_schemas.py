@@ -24,6 +24,7 @@ class TemplateSection(BaseModel):
         return self
 
 class TemplateLayout(BaseModel):
+    show_downloads: bool = True
     show_journal_info: bool = True
     show_submissions: bool | None = None
     menu_position: Literal["top", "left", "right"]

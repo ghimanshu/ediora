@@ -3,7 +3,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import type { JournalInfo, Journal } from "@/lib/journals";
-const infoFields = [["editor_in_chief", "EiC", "Narjess ALOUI"], ["frequency", "Frequency", "Four iss./ year"], ["final_decision", "Final decision", "75 days"], ["acceptance_rate", "Acceptance rate", "15%"], ["plagiarism", "Plagiarism", "<10%"], ["language", "Language", "English"], ["review_process", "Review process", "Single-blind"], ["open_access", "Open access", "Yes"], ["copyright", "Copyright", "CC-BY 4.0"], ["eissn", "eISSN", "2323-5233"]] as const;
+const infoFields = [["editor_in_chief", "Editor in Chief", "Narjess ALOUI"], ["frequency", "Frequency", "Four iss./ year"], ["final_decision", "Final decision", "75 days"], ["acceptance_rate", "Acceptance rate", "15%"], ["plagiarism", "Plagiarism", "<10%"], ["language", "Language", "English"], ["review_process", "Review process", "Single-blind"], ["open_access", "Open access", "Yes"], ["copyright", "Copyright", "CC-BY 4.0"], ["eissn", "eISSN", "2323-5233"]] as const;
 export default function JournalInfoPanel({ journal, onChanged }: { journal: Journal; onChanged: (journal: Journal) => void }) {
   const router = useRouter();
   const [info, setInfo] = useState<JournalInfo>(journal.journal_info);

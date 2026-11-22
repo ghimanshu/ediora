@@ -65,7 +65,7 @@ def editor_journals(editor_id: int | None = Query(None, gt=0), date_from: date |
         else:
             filters.append(EditorJournal.created_at < datetime.combine(date_to + timedelta(days=1), time.min, timezone.utc))
     page_count = select(func.count(EditorJournalPage.id)).where(EditorJournalPage.journal_id == EditorJournal.id).correlate(EditorJournal).scalar_subquery()
-    first_slug = select(EditorJournalPage.slug).where(EditorJournalPage.journal_id == EditorJournal.id).order_by(
+    first_slug = select(EditorJournalPage.slug).where(EditorJournalPage.journal_id == EditorJournal.id, EditorJournalPage.is_active.is_(True)).order_by(
         case((EditorJournalPage.slug == "home", 0), else_=1), EditorJournalPage.position).limit(1).correlate(EditorJournal).scalar_subquery()
     statement = select(EditorJournal, Editor, page_count.label("page_count"), first_slug.label("first_slug")).join(Editor, Editor.id == EditorJournal.editor_id).where(*filters)
     rows = db.execute(statement.order_by(EditorJournal.created_at.desc(), EditorJournal.id.desc()).offset(offset).limit(limit)).all()

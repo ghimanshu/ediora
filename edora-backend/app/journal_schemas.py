@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, field_validator, model_validator
 from app.page_schemas import PageInput, PageOutput
 from app.template_schemas import TemplateLayout
 
@@ -48,6 +48,14 @@ class JournalCreate(BaseModel):
             raise ValueError("Combined new page HTML must not exceed 1000000 characters")
         return self
 
+class JournalPageOutput(PageOutput):
+    source_type: Literal["admin", "editor"]
+    is_active: bool
+
+class JournalPageStatus(BaseModel):
+    is_active: StrictBool
+    model_config = ConfigDict(extra="forbid")
+
 class JournalOutput(BaseModel):
     menu_order: list[str] = Field(default_factory=list)
     journal_info: JournalInfo = Field(default_factory=JournalInfo)
@@ -60,17 +68,19 @@ class JournalOutput(BaseModel):
     template_name: str
     template_description: str
     template_layout: TemplateLayout
-    pages: list[PageOutput]
+    pages: list[JournalPageOutput]
     created_at: datetime
     updated_at: datetime
 
 
 class PublicJournalPage(BaseModel):
+    menu_group: Literal["", "Ethics", "For Authors"] = ""
     title: str
     slug: str
     content_html: str
 
 class PublicJournal(BaseModel):
+    inactive_page_slugs: list[str] = Field(default_factory=list)
     menu_order: list[str] = Field(default_factory=list)
     editor_email: str
     journal_info: JournalInfo = Field(default_factory=JournalInfo)

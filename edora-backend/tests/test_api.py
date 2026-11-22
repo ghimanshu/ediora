@@ -340,8 +340,9 @@ def test_private_journal_copies_and_tenant_isolation(client, setup, monkeypatch)
     starter = client.get("/api/v1/templates", headers=first).json()[0]
     source_template = {"name": "Private Journal Source", "description": "Snapshot source", "layout": starter["layout"]}
     template = client.post("/api/v1/admin/templates", headers=admin, json=source_template).json()
-    source_page = {"title": "Source page", "slug": "source-one", "content_html": "<h2>Original</h2><p>Keep this content</p>"}
+    source_page = {"menu_group": "Ethics", "title": "Source page", "slug": "source-one", "content_html": "<h2>Original</h2><p>Keep this content</p>"}
     page_one = client.post("/api/v1/admin/pages", headers=admin, json=source_page).json()
+    assert page_one["menu_group"] == "Ethics"
     page_two = client.post("/api/v1/admin/pages", headers=admin, json={**source_page, "title": "Second source", "slug": "source-two"}).json()
     journal_input = {"name": "My Journal", "template_id": template["id"], "page_ids": [page_two["id"], page_one["id"]], "new_pages": [{"title": "My introduction", "slug": "my-introduction", "content_html": "<p>Private introduction</p>"}]}
     assert client.get("/api/v1/editor/journal").status_code == 401
@@ -464,8 +465,8 @@ def test_journal_with_only_new_pages_and_invalid_drafts(client, setup):
     assert public["name"] == "Custom Journal"
     assert public["template_layout"] == journal["template_layout"]
     assert public["pages"][0]["content_html"] == "<h2>My research</h2><p>Private article</p>"
-    assert set(public) == {"name", "slug", "editor_code", "template_layout", "pages", "journal_info", "editor_email", "menu_order"}
-    assert set(public["pages"][0]) == {"title", "slug", "content_html"}
+    assert set(public) == {"name", "slug", "editor_code", "template_layout", "pages", "journal_info", "editor_email", "menu_order", "inactive_page_slugs"}
+    assert set(public["pages"][0]) == {"title", "slug", "content_html", "menu_group"}
     assert public["editor_email"] == payload["email"]
     assert client.get(f'/api/v1/public/journals/{journal["editor_code"]}/wrong-journal').status_code == 404
     assert client.get('/api/v1/public/journals/00000000/custom-journal').status_code == 404
@@ -1027,3 +1028,73 @@ def test_article_edit_can_assign_move_and_remove_same_journal_volume(client,setu
         assert client.patch(url,headers=headers,json={**data,"volume_id":value}).status_code==422
     assert client.patch(url,headers=headers,json={**data,"volume_id":None}).json()["volume_id"] is None
     assert client.patch(url,headers=headers,json={**data,"volume_id":first["id"]}).json()["volume_id"]==first["id"]
+
+def test_editor_can_delete_own_pages_and_toggle_admin_copies(client,setup):
+    headers=auth_headers(client,authenticate(client,setup))
+    with SessionLocal() as db:
+        master=WebPage(title="Admin About",slug="about",content_html="<p>Admin content</p>")
+        submission=WebPage(title="Submissions",slug="submissions",content_html="<p>Submission instructions</p>")
+        db.add_all([master,submission]);db.commit();master_id=master.id;submission_id=submission.id
+    template=client.get("/api/v1/templates",headers=headers).json()[0]["id"]
+    body={"name":"Page controls","template_id":template,"page_ids":[master_id,submission_id],"new_pages":[{"title":"My page","slug":"my-page","content_html":"<p>My content</p>"}]}
+    journal=client.post("/api/v1/editor/journal",headers=headers,json=body).json()
+    second=client.post("/api/v1/editor/journal",headers=headers,json={**body,"name":"Another page journal"}).json()
+    copied=next(page for page in journal["pages"] if page["slug"]=="about")
+    custom=next(page for page in journal["pages"] if page["slug"]=="my-page")
+    submission_page=next(page for page in journal["pages"] if page["slug"]=="submissions")
+    assert copied["source_type"]=="admin" and copied["is_active"]
+    assert custom["source_type"]=="editor"
+    suffix=f'?journal_id={journal["id"]}'
+    url=f'/api/v1/editor/journal/pages/{copied["id"]}'
+    assert client.delete(url+suffix,headers=headers).status_code==403
+    assert client.patch(f'/api/v1/editor/journal/pages/{custom["id"]}/status'+suffix,headers=headers,json={"is_active":False}).status_code==403
+    assert client.patch(url+"/status"+suffix,json={"is_active":False}).status_code==401
+    assert client.patch(url+f'/status?journal_id={second["id"]}',headers=headers,json={"is_active":False}).status_code==404
+    deactivated=client.patch(url+"/status"+suffix,headers=headers,json={"is_active":False})
+    assert deactivated.status_code==200
+    assert not next(page for page in deactivated.json()["pages"] if page["id"]==copied["id"])["is_active"]
+    public_url=f'/api/v1/public/journals/{journal["editor_code"]}/{journal["slug"]}'
+    public=client.get(public_url,headers=headers).json()
+    assert "about" not in [page["slug"] for page in public["pages"]]
+    assert "about" not in public["menu_order"] and "about" in public["inactive_page_slugs"]
+    with SessionLocal() as db:
+        assert db.get(WebPage,master_id).content_html=="<p>Admin content</p>"
+    assert client.patch(url+"/status"+suffix,headers=headers,json={"is_active":True}).status_code==200
+    assert "about" in [page["slug"] for page in client.get(public_url,headers=headers).json()["pages"]]
+    assert client.patch(f'/api/v1/editor/journal/pages/{submission_page["id"]}/status'+suffix,headers=headers,json={"is_active":False}).status_code==200
+    public=client.get(public_url,headers=headers).json()
+    assert "submissions" not in public["menu_order"] and "submission" not in public["menu_order"]
+    delete_url=f'/api/v1/editor/journal/pages/{custom["id"]}'
+    assert client.delete(delete_url+f'?journal_id={second["id"]}',headers=headers).status_code==404
+    removed=client.delete(delete_url+suffix,headers=headers)
+    assert removed.status_code==200 and custom["id"] not in [page["id"] for page in removed.json()["pages"]]
+    assert "my-page" not in removed.json()["menu_order"]
+    assert client.delete(delete_url+suffix,headers=headers).status_code==404
+    assert next(page for page in client.get(f'/api/v1/editor/journal?journal_id={second["id"]}',headers=headers).json()["pages"] if page["slug"]=="about")["is_active"]
+
+def test_existing_journal_can_activate_new_library_page_without_overwriting_copy(client, setup):
+    headers=auth_headers(client,authenticate(client,setup))
+    template=client.get('/api/v1/templates',headers=headers).json()[0]['id']
+    body={'name':'Existing journal','template_id':template,'new_pages':[{'title':'Home','slug':'home','content_html':'<p>Home</p>'}]}
+    journal=client.post('/api/v1/editor/journal',headers=headers,json=body).json()
+    other=client.post('/api/v1/editor/journal',headers=headers,json={**body,'name':'Other journal'}).json()
+    with SessionLocal() as db:
+        source=WebPage(title='New policy',slug='new-policy',content_html='<p>Original policy</p>',menu_group='Ethics')
+        db.add(source);db.commit();source_id=source.id
+    url=f'/api/v1/editor/journal/pages/library/{source_id}?journal_id={journal["id"]}'
+    assert client.post(url,json={}).status_code==401
+    assert client.post(url,headers={**headers,'X-Editor-Code':'wrong123'},json={}).status_code==403
+    assert client.post(url.replace(str(journal['id']), '999999'),headers=headers,json={}).status_code==404
+    added=client.post(url,headers=headers,json={})
+    assert added.status_code==200
+    page=next(p for p in added.json()['pages'] if p['slug']=='new-policy')
+    assert page['source_type']=='admin' and page['is_active'] and page['menu_group']=='Ethics'
+    copied_url=f'/api/v1/editor/journal/pages/{page["id"]}?journal_id={journal["id"]}'
+    assert client.patch(copied_url,headers=headers,json={'title':'My policy','slug':'new-policy','content_html':'<p>My changes</p>'}).status_code==200
+    assert client.patch(copied_url.replace('?', '/status?'),headers=headers,json={'is_active':False}).status_code==200
+    again=client.post(url,headers=headers,json={}).json()
+    copies=[p for p in again['pages'] if p['slug']=='new-policy']
+    assert len(copies)==1 and copies[0]['is_active'] and copies[0]['content_html']=='<p>My changes</p>'
+    assert len(client.get(f'/api/v1/editor/journal?journal_id={other["id"]}',headers=headers).json()['pages'])==1
+    with SessionLocal() as db:
+        assert db.get(WebPage,source_id).content_html=='<p>Original policy</p>'

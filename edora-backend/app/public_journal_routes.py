@@ -29,5 +29,7 @@ def public_journal(request: Request, credentials: HTTPAuthorizationCredentials |
         if viewer.role != "super_admin" and viewer.id != journal.editor_id:
             raise HTTPException(404,"Journal not found")
     pages = db.scalars(select(EditorJournalPage).where(EditorJournalPage.journal_id == journal.id).order_by(EditorJournalPage.position)).all()
-    return {"menu_order": menu_order(journal, pages), "editor_email": email, "journal_info": journal.journal_info or {}, "name": journal.name, "slug": journal.slug, "editor_code": code, "template_layout": journal.template_layout,
-            "pages": [PageInput(title=p.title, slug=p.slug, content_html=p.content_html).model_dump() for p in pages]}
+    inactive_slugs = [page.slug for page in pages if not page.is_active]
+    pages = [page for page in pages if page.is_active]
+    return {"inactive_page_slugs": inactive_slugs, "menu_order": menu_order(journal, pages, inactive_slugs), "editor_email": email, "journal_info": journal.journal_info or {}, "name": journal.name, "slug": journal.slug, "editor_code": code, "template_layout": journal.template_layout,
+            "pages": [{**PageInput(title=p.title, slug=p.slug, content_html=p.content_html).model_dump(), "menu_group": p.menu_group} for p in pages]}

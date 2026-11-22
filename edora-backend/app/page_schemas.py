@@ -1,3 +1,4 @@
+from typing import Literal
 from datetime import datetime
 from html import unescape
 import re
@@ -25,7 +26,11 @@ class PageInput(BaseModel):
             raise ValueError("Page content exceeds 100000 characters after sanitization")
         return cleaned
 
+class AdminPageInput(PageInput):
+    menu_group: Literal["", "Ethics", "For Authors"] = ""
+
 class PageSummary(BaseModel):
+    menu_group: Literal["", "Ethics", "For Authors"] = ""
     id: int
     title: str
     slug: str

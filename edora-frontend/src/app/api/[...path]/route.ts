@@ -28,8 +28,11 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       : path === "editor/journal" ? ["GET", "POST", "DELETE"]
       : (path === "editor/journal/status" || path === "editor/journal/info") ? ["PATCH"]
       : path === "editor/journal/pages" ? ["POST"]
+      : /^editor\/journal\/pages\/library\/[1-9]\d*$/.test(path) ? ["POST"]
       : path === "editor/journal/pages/order" ? ["PATCH"]
-      : path === "editor/journal/template" || /^editor\/journal\/pages\/[1-9]\d*$/.test(path) ? ["PATCH"]
+      : /^editor\/journal\/pages\/[1-9]\d*\/status$/.test(path) ? ["PATCH"]
+      : /^editor\/journal\/pages\/[1-9]\d*$/.test(path) ? ["PATCH", "DELETE"]
+      : path === "editor/journal/template" ? ["PATCH"]
       : path === "website/template" ? ["GET", "POST"]
       : allowed[path] ? [allowed[path]] : [];
   if (!methods.length) return NextResponse.json({ detail: "Not found" }, { status: 404 });

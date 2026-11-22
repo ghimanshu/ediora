@@ -6,20 +6,22 @@ const vm = require("node:vm");
 const script = fs.readFileSync(path.join(__dirname, "../../edora-backend/app/static/journal-info.js"), "utf8");
 function element(tag, text = "") { return { tag, textContent: text, children: [], appendChild(child) { this.children.push(child); }, replaceChildren(...children) { this.children = children; } }; }
 function contents(el) { return el.textContent + el.children.map(contents).join(" "); }
-async function run({ storage = new Map(), code = "ab12cd34", slug = "research", now = 1000000, offline = false, denied = false, blocked = false, language = "French" } = {}) {
+async function run({ storage = new Map(), code = "ab12cd34", slug = "research", now = 1000000, offline = false, denied = false, blocked = false, language = "French", chief = "Dr. Example" } = {}) {
   let calls = 0;
   const target = element("div"); target.appendChild(element("p", "Snapshot"));
   const contact = element("a");
+  const chiefValue = element("span");
+  const chiefRoot = { hidden: true, querySelector: () => chiefValue };
   const config = { api_origin: "https://portal.example.com", editor_code: code, journal_slug: slug };
   class Clock extends Date { static now() { return now; } }
   const context = { window: { EDORA_JOURNAL: config }, URL, Date: Clock, Number, JSON, AbortSignal,
-    document: { createElement: tag => element(tag), querySelectorAll: selector => selector === "[data-journal-info]" ? [{ querySelector: () => target }] : [contact] },
+    document: { createElement: tag => element(tag), querySelectorAll: selector => selector === "[data-journal-info]" ? [{ querySelector: () => target }] : selector === "[data-journal-editor-email]" ? [contact] : [chiefRoot] },
     localStorage: { getItem(key) { if (blocked) throw Error("Blocked"); return storage.get(key) || null; }, setItem(key, value) { if (blocked) throw Error("Blocked"); storage.set(key, value); }, removeItem(key) { storage.delete(key); } },
-    fetch: async () => { calls++; if (offline) throw Error("Offline"); return { status: denied ? 404 : 200, ok: !denied, json: async () => ({ editor_code: code, journal_slug: slug, journal_info: { language, plagiarism: "<10%" }, editor_email: "editor@example.com" }) }; },
+    fetch: async () => { calls++; if (offline) throw Error("Offline"); return { status: denied ? 404 : 200, ok: !denied, json: async () => ({ editor_code: code, journal_slug: slug, journal_info: { editor_in_chief: chief, language, plagiarism: "<10%" }, editor_email: "editor@example.com" }) }; },
   };
   vm.runInNewContext(script, context);
   await new Promise(setImmediate);
-  return { calls, target, contact, storage };
+  return { calls, target, contact, storage, chiefRoot, chiefValue };
 }
 test("journal information fetches once and is reused between exported pages", async () => {
   const first = await run();
@@ -48,4 +50,13 @@ test("unavailable journals clear expired cached data", async () => {
   const first = await run();
   const hidden = await run({ storage: first.storage, now: 1300001, denied: true });
   assert.equal(hidden.storage.size, 0); assert.doesNotMatch(contents(hidden.target), /French/); assert.equal(hidden.contact.hidden, true);
+});
+
+test("Home header editor-in-chief updates from cached live metadata and hides empty values", async () => {
+  const first = await run({ chief: "Dr. Example" });
+  assert.equal(first.chiefRoot.hidden, false); assert.equal(first.chiefValue.textContent, "Dr. Example");
+  const cached = await run({ storage: first.storage });
+  assert.equal(cached.calls, 0); assert.equal(cached.chiefValue.textContent, "Dr. Example");
+  const cleared = await run({ storage: first.storage, now: 1300001, chief: "" });
+  assert.equal(cleared.chiefRoot.hidden, true); assert.equal(cleared.chiefValue.textContent, "");
 });

@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
 from app.models import Editor, WebPage
-from app.page_schemas import PageInput, PageOutput, PageSummary
+from app.page_schemas import AdminPageInput, PageOutput, PageSummary
 from app.routes import current_admin
 
 router = APIRouter(prefix="/api/v1/admin/pages")
@@ -31,14 +31,14 @@ def get_page(page_id: int, admin: Editor = Depends(current_admin), db: DBSession
     return find_page(db, page_id)
 
 @router.post("", response_model=PageOutput, status_code=201)
-def create_page(data: PageInput, admin: Editor = Depends(current_admin), db: DBSession = Depends(get_db)):
+def create_page(data: AdminPageInput, admin: Editor = Depends(current_admin), db: DBSession = Depends(get_db)):
     page = WebPage(**data.model_dump())
     db.add(page)
     save_page(db)
     return page
 
 @router.patch("/{page_id}", response_model=PageOutput)
-def edit_page(page_id: int, data: PageInput, admin: Editor = Depends(current_admin), db: DBSession = Depends(get_db)):
+def edit_page(page_id: int, data: AdminPageInput, admin: Editor = Depends(current_admin), db: DBSession = Depends(get_db)):
     page = find_page(db, page_id)
     for key, value in data.model_dump().items():
         setattr(page, key, value)

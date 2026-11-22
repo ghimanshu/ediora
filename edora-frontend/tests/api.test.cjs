@@ -321,3 +321,25 @@ test("dashboard mutations reject anonymous requests and bind the editor code to 
   assert.equal(forwarded.options.headers["X-Internal-API-Key"],"test-internal-key");
   assert.equal(forwarded.options.headers.Authorization,"Bearer test-session");
 });
+
+test("journal page deletion and activation use authenticated internal routes", async () => {
+  const origin=process.env.APP_ORIGIN ?? "http://localhost:3000";
+  let forwarded;
+  const proxy=loadModule("src/app/api/[...path]/route.ts",async (url,options)=>{forwarded={url,options};return Response.json({id:7,pages:[]});});
+  const removed=await proxy.DELETE(testRequest(`${origin}/api/editor/journal/pages/12?journal_id=7`,{method:"DELETE",headers:{origin}}),context("editor/journal/pages/12"));
+  assert.equal(removed.status,200);assert.ok(forwarded.url.endsWith("/editor/journal/pages/12?journal_id=7"));
+  const changed=await proxy.PATCH(testRequest(`${origin}/api/editor/journal/pages/12/status?journal_id=7`,{method:"PATCH",headers:{origin,"content-type":"application/json"},body:JSON.stringify({is_active:false})}),context("editor/journal/pages/12/status"));
+  assert.equal(changed.status,200);assert.deepEqual(JSON.parse(forwarded.options.body),{is_active:false});
+  assert.equal(forwarded.options.headers["X-Editor-Code"],"ab12cd34");
+});
+
+test("new admin pages are copied through the authenticated internal API", async () => {
+  const origin=process.env.APP_ORIGIN ?? "http://localhost:3000";
+  let forwarded;
+  const proxy=loadModule("src/app/api/[...path]/route.ts",async (url,options)=>{forwarded={url,options};return Response.json({id:7,pages:[]});});
+  const result=await proxy.POST(testRequest(`${origin}/api/editor/journal/pages/library/12?journal_id=7`,{method:"POST",headers:{origin,"content-type":"application/json"},body:"{}"}),context("editor/journal/pages/library/12"));
+  assert.equal(result.status,200);
+  assert.ok(forwarded.url.endsWith("/editor/journal/pages/library/12?journal_id=7"));
+  assert.equal(forwarded.options.headers["X-Editor-Code"],"ab12cd34");
+  assert.equal(forwarded.options.headers.Authorization,"Bearer test-session");
+});

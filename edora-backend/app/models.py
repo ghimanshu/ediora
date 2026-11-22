@@ -64,6 +64,7 @@ class WebsiteTemplateSelection(Base):
 
 class WebPage(Base):
     __tablename__ = "web_pages"
+    menu_group: Mapped[str] = mapped_column(String(40), default="", server_default="")
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(150))
     slug: Mapped[str] = mapped_column(String(150), unique=True)
@@ -94,6 +95,9 @@ class EditorJournal(Base):
 class EditorJournalPage(Base):
     __tablename__ = "editor_journal_pages"
     __table_args__ = (UniqueConstraint("journal_id", "slug", name="uq_journal_page_slug"),)
+    source_type: Mapped[str] = mapped_column(String(10), default="editor", server_default="editor")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    menu_group: Mapped[str] = mapped_column(String(40), default="", server_default="")
     id: Mapped[int] = mapped_column(primary_key=True)
     journal_id: Mapped[int] = mapped_column(ForeignKey("editor_journals.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(150))

@@ -1,0 +1,4 @@
+import { groupJournalMenu, type JournalMenuItem } from "@/lib/journal-navigation";
+export default function JournalNavigation({ items, base, active }: { items: JournalMenuItem[]; base: string; active: string }) {
+  return <nav className="journal-website-navigation" aria-label="Journal pages">{groupJournalMenu(items).map((entry, index) => entry.grouped ? <details className="journal-menu-group" open={entry.items.some(item => item.slug === active)} data-active={entry.items.some(item => item.slug === active)} key={`group-${entry.title}`}><summary>{entry.title}</summary><div className="journal-menu-children">{entry.items.map(item => <a href={`${base}/${item.slug}`} key={item.slug} aria-current={item.slug === active ? "page" : undefined}>{item.title}</a>)}</div></details> : <a href={`${base}/${entry.items[0].slug}`} key={`page-${index}`} aria-current={entry.items[0].slug === active ? "page" : undefined}>{entry.title}</a>)}</nav>;
+}
