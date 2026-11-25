@@ -168,3 +168,15 @@ class ManuscriptSubmission(Base):
     pdf_content: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     notification_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+
+class JournalDeployment(Base):
+    __tablename__ = "journal_deployments"
+    __table_args__ = (UniqueConstraint("journal_id", "version", name="uq_journal_deployment_version"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    journal_id: Mapped[int] = mapped_column(ForeignKey("editor_journals.id", ondelete="CASCADE"), index=True)
+    version: Mapped[int] = mapped_column()
+    page_count: Mapped[int] = mapped_column()
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    website_zip: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)

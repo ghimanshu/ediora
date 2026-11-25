@@ -278,3 +278,13 @@ Migration `0021` adds `source_type` (`admin`/`editor`) and `is_active` to editor
 
 ### Add a newly available admin page to an existing journal
 `POST /api/v1/editor/journal/pages/library/{page_id}?journal_id={journal_id}` copies the admin page into the authenticated editor's journal and activates it. Uses the normal internal gateway key, session token and matching editor code. A repeated call reactivates the existing admin copy without overwriting personal edits. Slug conflicts with editor-created pages return 409; missing sources return 404. The frontend discovers available sources with the existing editor page library GET endpoint. No migration is required.
+
+## Deployment requests and saved versions
+Migration `0023` adds `journal_deployments` with a unique version number per journal, immutable journal JSON, a frozen website archive, live page count and request timestamp. Version creation locks the owned journal before allocating V1/V2/etc.
+
+- `GET /api/v1/editor/journal/deployments?journal_id=N`: own journal request history.
+- `POST /api/v1/editor/journal/deployments?journal_id=N`: requires Published status, token, matching editor code and internal gateway key. Body: `{ "expected_updated_at": "<journal.updated_at>", "expected_page_count": 7 }`. Stale confirmation returns 409. Success returns 201 and the saved version summary.
+- `GET /api/v1/admin/editor-journals/N/deployments`: admin-only version history.
+- `GET /api/v1/admin/deployments/N/site/{file}`: admin-only immutable HTML/CSS/PDF preview. All browser traffic passes through matching internal `/api` routes.
+
+Snapshots include active pages and generated system pages, template settings, journal information, published Current/Archives articles and their PDFs. Preview scripts and submission forms are disabled so versions never fetch later journal changes. Requests appear as persistent notifications/counts in Editor Journals; active super admins also receive email alerts in a background task. Mail failures are logged without discarding requests. Requesting deployment does not configure hosting or publish a subdomain. Deleting a journal also removes its deployment history.

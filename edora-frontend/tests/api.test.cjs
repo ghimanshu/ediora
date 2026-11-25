@@ -343,3 +343,18 @@ test("new admin pages are copied through the authenticated internal API", async 
   assert.equal(forwarded.options.headers["X-Editor-Code"],"ab12cd34");
   assert.equal(forwarded.options.headers.Authorization,"Bearer test-session");
 });
+
+test("deployment requests and version previews use authenticated internal routes", async () => {
+  const origin=process.env.APP_ORIGIN ?? "http://localhost:3000";
+  let forwarded;
+  const proxy=loadModule("src/app/api/[...path]/route.ts",async (url,options)=>{forwarded={url,options}; return url.includes('/site/') ? new Response('<html>V1</html>',{headers:{'content-type':'text/html','content-security-policy':"default-src 'none'"}}) : Response.json({version:1});});
+  const created=await proxy.POST(testRequest(`${origin}/api/editor/journal/deployments?journal_id=7`,{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({expected_updated_at:'2026-11-22T00:00:00Z',expected_page_count:4})}),context('editor/journal/deployments'));
+  assert.equal(created.status,200);
+  assert.equal(forwarded.options.headers['X-Editor-Code'],'ab12cd34');
+  const preview=await proxy.GET(testRequest(`${origin}/api/admin/deployments/1/site/index.html`, {headers:{cookie:"edora_session=test-session"}}),context('admin/deployments/1/site/index.html'));
+  assert.equal(preview.status,200);
+  assert.equal(preview.headers.get('content-type'),'text/html');
+  assert.equal(await preview.text(),'<html>V1</html>');
+  assert.equal(forwarded.options.headers.Authorization,'Bearer test-session');
+  assert.equal(preview.headers.get('content-security-policy'),"default-src 'none'");
+});

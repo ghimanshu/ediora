@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, case
 from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
-from app.models import Editor, EditorJournal, EditorJournalPage
+from app.models import Editor, EditorJournal, EditorJournalPage, JournalDeployment
 from app.routes import current_admin
 from app.journal_routes import journal_output
 from app.journal_schemas import JournalOutput, JournalStatus
@@ -20,6 +20,7 @@ class JournalEditorChoice(BaseModel):
     email: str
 
 class AdminJournalSummary(BaseModel):
+    deployment_requests: int = 0
     preview_path: str
     id: int
     name: str
@@ -72,6 +73,7 @@ def editor_journals(editor_id: int | None = Query(None, gt=0), date_from: date |
     total = db.scalar(select(func.count()).select_from(EditorJournal).join(Editor, Editor.id == EditorJournal.editor_id).where(*filters))
     return {"items": [{"id": journal.id, "name": journal.name, "template_name": journal.template_name, "status": journal.status,
                        "editor_id": editor.id, "editor_name": f"{editor.first_name} {editor.last_name}", "editor_email": editor.email,
+                       "deployment_requests": db.scalar(select(func.count()).select_from(JournalDeployment).where(JournalDeployment.journal_id==journal.id)),
                        "preview_path": f"/{editor.public_code}/{journal.slug}/{first_page or 'current'}",
                        "page_count": count, "created_at": journal.created_at, "updated_at": journal.updated_at} for journal, editor, count, first_page in rows], "total": total}
 

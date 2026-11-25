@@ -11,7 +11,11 @@ const allowed: Record<string, string> = {
 };
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const path = (await context.params).path.join("/");
-  const methods = /^admin\/users(?:\/[1-9]\d*)?$/.test(path)
+  const versionFile = /^admin\/deployments\/[1-9]\d*\/site\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+$/.test(path);
+  const methods = versionFile ? ["GET"]
+    : path === "editor/journal/deployments" ? ["GET", "POST"]
+    : /^admin\/editor-journals\/[1-9]\d*\/deployments$/.test(path) ? ["GET"]
+    : /^admin\/users(?:\/[1-9]\d*)?$/.test(path)
     ? (path === "admin/users" ? ["GET"] : ["PATCH", "DELETE"])
     : /^admin\/editor-journals\/[1-9]\d*\/export$/.test(path) ? ["GET"]
     : /^editor\/articles\/[1-9]\d*\/pdf$/.test(path) ? ["GET"]
@@ -80,6 +84,13 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
         "Content-Type": "application/zip",
         "Content-Disposition": upstream.headers.get("content-disposition") ?? 'attachment; filename="journal-website.zip"',
         "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+      } });
+    }
+    if (versionFile && upstream.ok) {
+      return new NextResponse(upstream.body, { status: upstream.status, headers: {
+        "Content-Type": upstream.headers.get("content-type") ?? "application/octet-stream",
+        "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": upstream.headers.get("content-security-policy") ?? "default-src 'none'",
       } });
     }
     const data = upstream.status === 204 ? null : await upstream.json();

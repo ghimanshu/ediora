@@ -14,7 +14,7 @@ from alembic.config import Config
 from alembic import command
 from app.main import app
 from app.database import SessionLocal
-from app.models import Editor, Verification, Session, Contact, WebsiteTemplateSelection, WebPage, EditorJournal, EditorJournalPage, JournalIssue, JournalArticle, ManuscriptSubmission, SubmissionCaptcha
+from app.models import Editor, Verification, Session, Contact, WebsiteTemplateSelection, WebPage, EditorJournal, EditorJournalPage, JournalDeployment, JournalIssue, JournalArticle, ManuscriptSubmission, SubmissionCaptcha
 from app import routes
 from app.security import digest
 
@@ -24,7 +24,7 @@ def setup(monkeypatch):
     monkeypatch.setattr(settings,"internal_api_key","test-internal-key")
     command.upgrade(Config('alembic.ini'), 'head')
     with SessionLocal() as db:
-        for model in (SubmissionCaptcha, ManuscriptSubmission, JournalArticle, JournalIssue, EditorJournalPage, EditorJournal, WebPage, WebsiteTemplateSelection, Session, Verification, Contact, Editor):
+        for model in (JournalDeployment, SubmissionCaptcha, ManuscriptSubmission, JournalArticle, JournalIssue, EditorJournalPage, EditorJournal, WebPage, WebsiteTemplateSelection, Session, Verification, Contact, Editor):
             db.execute(delete(model))
         db.commit()
     messages = []
@@ -1098,3 +1098,58 @@ def test_existing_journal_can_activate_new_library_page_without_overwriting_copy
     assert len(client.get(f'/api/v1/editor/journal?journal_id={other["id"]}',headers=headers).json()['pages'])==1
     with SessionLocal() as db:
         assert db.get(WebPage,source_id).content_html=='<p>Original policy</p>'
+
+def test_deployment_versions_require_publication_and_preserve_immutable_preview(client,setup,monkeypatch):
+    from app.config import settings
+    from app.seed_admin import seed_admin
+    monkeypatch.setattr(settings,'super_admin_email','deploy-admin@example.com')
+    monkeypatch.setattr(settings,'super_admin_password','admin-password-1234')
+    seed_admin()
+    admin=auth_headers(client,client.post('/api/v1/auth/login',json={'email':settings.super_admin_email,'password':settings.super_admin_password}).json()['access_token'])
+    headers=auth_headers(client,authenticate(client,setup))
+    template=client.get('/api/v1/templates',headers=headers).json()[0]['id']
+    journal=client.post('/api/v1/editor/journal',headers=headers,json={'name':'Versioned journal','template_id':template,'new_pages':[{'title':'Home','slug':'home','content_html':'<p>Original version</p>'}]}).json()
+    url=f'/api/v1/editor/journal/deployments?journal_id={journal["id"]}'
+    confirm={'expected_updated_at':journal['updated_at'],'expected_page_count':4}
+    assert client.post(url,headers=headers,json=confirm).status_code==409
+    assert client.post(url,json=confirm).status_code==401
+    journal=client.patch(f'/api/v1/editor/journal/status?journal_id={journal["id"]}',headers=headers,json={'status':'Published'}).json()
+    confirm['expected_updated_at']=journal['updated_at']
+    assert client.post(url,headers=headers,json={**confirm,'expected_page_count':5}).status_code==409
+    with SessionLocal() as db:
+        issue=JournalIssue(journal_id=journal['id'],title='Saved issue',volume='1',number='1',is_published=True,published_at=datetime.now(timezone.utc)-timedelta(days=1))
+        db.add(issue);db.flush()
+        article=JournalArticle(journal_id=journal['id'],issue_id=issue.id,title='Saved article',authors=['Saved Author'],is_published=True,pdf_content=b'%PDF-1.4 saved',pdf_size=14,how_to_cite='Saved citation')
+        db.add(article);db.commit();saved_article_id=article.id
+    first=client.post(url,headers=headers,json=confirm)
+    assert first.status_code==201, first.text
+    first=first.json()
+    assert first['version']==1 and first['page_count']==4
+    assert any('Deployment requested' in message[1] for message in setup)
+    preview=first['preview_path'].replace('/api/','/api/v1/',1)
+    assert client.get(preview).status_code==401
+    assert client.get(preview,headers=headers).status_code==403
+    original=client.get(preview,headers=admin)
+    assert original.status_code==200 and 'Original version' in original.text
+    assert '<script' not in original.text
+    current_preview=client.get(preview.replace('index.html','current.html'),headers=admin)
+    assert 'Saved article' in current_preview.text and 'Saved citation' in current_preview.text
+    pdf_preview=preview.replace('index.html',f'articles/{saved_article_id}.pdf')
+    assert client.get(pdf_preview,headers=admin).content==b'%PDF-1.4 saved'
+    with SessionLocal() as db:
+        article=db.get(JournalArticle,saved_article_id);article.title='Changed article';article.pdf_content=b'%PDF changed';db.commit()
+    assert 'Saved article' in client.get(preview.replace('index.html','current.html'),headers=admin).text
+    assert client.get(pdf_preview,headers=admin).content==b'%PDF-1.4 saved'
+
+    assert client.get(preview.replace('index.html','assets/styles.css'),headers=admin).status_code==200
+    journal=client.patch(f'/api/v1/editor/journal/pages/{journal["pages"][0]["id"]}?journal_id={journal["id"]}',headers=headers,json={'title':'Home','slug':'home','content_html':'<p>Updated version</p>'}).json()
+    assert client.post(url,headers=headers,json=confirm).status_code==409
+    second=client.post(url,headers=headers,json={**confirm,'expected_updated_at':journal['updated_at']}).json()
+    assert second['version']==2
+    assert client.get(preview,headers=admin).content==original.content
+    assert 'Updated version' in client.get(second['preview_path'].replace('/api/','/api/v1/',1),headers=admin).text
+    history=f'/api/v1/admin/editor-journals/{journal["id"]}/deployments'
+    assert [v['version'] for v in client.get(history,headers=admin).json()]==[2,1]
+    assert client.get(history,headers=headers).status_code==403
+    assert len(client.get(url,headers=headers).json())==2
+    assert client.get('/api/v1/admin/editor-journals',headers=admin).json()['items'][0]['deployment_requests']==2

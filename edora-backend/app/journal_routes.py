@@ -7,7 +7,7 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from app.database import get_db
-from app.models import Editor, Session, Verification, WebPage, WebsiteTemplate, EditorJournal, EditorJournalPage, JournalArticle, JournalIssue, ManuscriptSubmission, SubmissionCaptcha, now
+from app.models import Editor, Session, Verification, WebPage, WebsiteTemplate, EditorJournal, EditorJournalPage, JournalDeployment, JournalArticle, JournalIssue, ManuscriptSubmission, SubmissionCaptcha, now
 from app.routes import current_editor, verification_email
 from app.schemas import EditorProfileInput, EditorOutput
 from app.page_schemas import PageInput, PageOutput, PageSummary
@@ -210,6 +210,7 @@ def update_journal_info(data: JournalInfo, editor: Editor = Depends(editor_accou
 @router.delete("/journal", status_code=204)
 def delete_journal(journal_id: int = Query(gt=0), editor: Editor = Depends(editor_account), db: DBSession = Depends(get_db)):
     journal = own_journal(db, editor.id, journal_id)
+    db.execute(delete(JournalDeployment).where(JournalDeployment.journal_id == journal.id))
     db.execute(delete(SubmissionCaptcha).where(SubmissionCaptcha.journal_id == journal.id))
     db.execute(delete(ManuscriptSubmission).where(ManuscriptSubmission.journal_id == journal.id))
     db.execute(delete(JournalArticle).where(JournalArticle.journal_id == journal.id))

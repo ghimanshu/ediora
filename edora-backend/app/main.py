@@ -45,3 +45,6 @@ app.include_router(submission_router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+from app.deployment_routes import router as deployment_router
+app.include_router(deployment_router)
